@@ -1,6 +1,7 @@
 cache/
 model/
 outputs/
+data/
 __pycache__/
 *.log
 backups/
@@ -13,4 +14,5 @@ private-build/
 .venv/
 .pytest_cache/
 .ruff_cache/
+.playwright-cli/
 .DS_Store

@@ -18,10 +18,10 @@ for host setup. This project does not install or change host drivers.
 
 ## Install
 
-Clone on the Spark, then run the commands in the main README. `./spark build`
-builds a local image; it does not download model weights. `./spark doctor` checks
+Clone on the Spark, then run the commands in the main README. `./persona build`
+builds a local image; it does not download model weights. `./persona doctor` checks
 architecture, CUDA, GPU identity, output permissions, and model file presence.
-`./spark download --accept-model-license` downloads the pinned model revision
+`./persona download --accept-model-license` downloads the pinned model revision
 only after explicit acceptance. Review the model's terms before using the flag.
 
 The launcher runs containers with your host UID/GID to avoid root-owned output
@@ -29,17 +29,26 @@ files. Run it as your ordinary user, not through `sudo`, after configuring
 Docker access on the host. A root-owned model/output directory from an earlier
 manual install may need its ownership corrected by its administrator.
 
-Docker builds use an allowlisted context containing only the Dockerfile and
-requirements. The application source is bind-mounted at runtime. Model weights,
-prompts, generated images, credentials, and `.git` never enter the build context.
+Docker builds use an allowlisted context containing the application source,
+tests, version metadata, Dockerfile, and requirements needed by the image.
+Model weights, prompts, generated images, credentials, private persona data,
+and `.git` never enter the build context. The application checkout is not
+mounted into the running container.
+
+Private persona data is mounted separately at `/persona-data` and is read-only
+to the application. The default host directory is `./data/personas`, which is
+Git-ignored. Set `PERSONA_DATA_DIR` in `.env` to keep real persona files
+outside the checkout. Writable mounts are limited to `model/`, `outputs/`, and
+`cache/`. The launcher rejects `PERSONA_DATA_DIR` if it overlaps any of those
+writable directories.
 
 ## Start, Stop, and Upgrade
 
 ```bash
-./spark start
-./spark status
-./spark logs
-./spark stop
+./persona start
+./persona status
+./persona logs
+./persona stop
 ```
 
 Start performs preflight before launching. Container health stays in `starting`
@@ -50,11 +59,11 @@ Before upgrading, stop the service and back up `outputs/`, `.env`, and any local
 code changes. Update to a reviewed commit/tag, rebuild, run tests, and restart:
 
 ```bash
-./spark stop
+./persona stop
 git pull --ff-only
-./spark build
-./spark test
-./spark start
+./persona build
+./persona test
+./persona start
 ```
 
 Rollback: stop, check out the previously recorded tag/commit, rebuild, restart.
@@ -68,18 +77,18 @@ SSH alias or a normal SSH connection with local port forwarding. Do not enable
 Gradio public sharing or publish the port on `0.0.0.0` for this alpha.
 
 If port 7862 is occupied, copy `.env.example` to `.env` and choose a different
-`SPARK_HTTP_PORT`, then use that port in the browser and SSH tunnel. For example,
+`PERSONA_HTTP_PORT`, then use that port in the browser and SSH tunnel. For example,
 `ssh -N -L 7863:127.0.0.1:7863 YOUR_SPARK_SSH_ALIAS` forwards port 7863.
 
-Advanced direct-Python settings: `SPARK_MODEL_DIR`, `SPARK_OUTPUT_DIR`,
-`SPARK_HOST` (defaults to loopback), and `SPARK_PORT` (7860). Compose configures
+Advanced direct-Python settings: `PERSONA_MODEL_DIR`, `PERSONA_OUTPUT_DIR`,
+`PERSONA_HOST` (defaults to loopback), and `PERSONA_PORT` (7860). Compose configures
 the container to listen on its internal interface and restricts access at the
 host. Keep the default model revision; replacing model files manually can make
 generation provenance inaccurate and is outside this release's support scope.
 
 ## Existing Prototype
 
-The earlier manually started container named `spark-image-lab` must be stopped
+An earlier manually started container named `spark-image-lab` must be stopped
 before starting Compose on the same port. Do not run both model processes at
 once. Keep its original source and container for rollback until validation
 finishes. Copy source only, retaining the existing `model/` and `outputs/`.

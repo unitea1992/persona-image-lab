@@ -10,10 +10,10 @@ Reloading the page reads history from disk, including after a server restart.
 Other browser sessions refresh when reloaded or after their next generation;
 this release does not push live history updates between sessions.
 
-Select a table row or gallery image to restore its prompt, references,
+Select a table row or gallery image to restore its effective prompt, references,
 dimensions, steps, seed, result preview, runtime, and download files. Selection
-does not generate an image. "Use as reference" makes the selected result the
-reference input for a subsequent edit; it replaces the current reference list.
+does not generate an image. "Use result as extra reference" makes the selected
+result the manual reference input for a subsequent edit.
 
 To remove a generation, select it, enable "Confirm permanent deletion," and
 choose "Delete permanently." The app removes the generation PNG and JSON record.
@@ -34,6 +34,7 @@ Version 1 records contain:
 - `schema_version`, app version, `id`, and UTC `created_at`.
 - Model identifier, pinned revision, and relevant library versions.
 - Prompt, width, height, steps, seed, guidance, and KV-cache settings.
+- Optional local persona identifier/name context when a persona preset was used.
 - `elapsed_seconds`, `peak_allocated_gib`, image mode, and alpha extrema.
 - Reference filename, content hash, and relative persistent path.
 

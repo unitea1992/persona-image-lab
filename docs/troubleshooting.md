@@ -2,11 +2,12 @@
 
 | Symptom | Check |
 | --- | --- |
-| Browser cannot connect just after start | Model loading takes several minutes. Check `./spark logs` and `./spark status`. |
-| Docker reports an occupied port | Stop the old container or choose `SPARK_HTTP_PORT` in `.env`. Update the SSH tunnel too. |
-| CUDA unavailable | Run `nvidia-smi` on the host, then `./spark doctor`. Check Container Toolkit and Docker GPU access. |
+| Browser cannot connect just after start | Model loading takes several minutes. Check `./persona logs` and `./persona status`. |
+| Docker reports an occupied port | Stop the old container or choose `PERSONA_HTTP_PORT` in `.env`. Update the SSH tunnel too. |
+| CUDA unavailable | Run `nvidia-smi` on the host, then `./persona doctor`. Check Container Toolkit and Docker GPU access. |
 | Unsupported GPU or architecture | This release targets ARM64 GB10 systems. It is not a gaming-PC install. |
-| Model missing/incomplete | Read the model license, then rerun `./spark download --accept-model-license`. Downloads are resumable. |
+| Model missing/incomplete | Read the model license, then rerun `./persona download --accept-model-license`. Downloads are resumable. |
+| Character preset is missing | Check `PERSONA_DATA_DIR`, the preset's `persona.json`, and that referenced files stay inside the preset directory. Restart after adding presets. |
 | Download/build network failure | Check connectivity and available disk. Retry the same pinned version; don't install unpinned replacements. |
 | NVIDIA registry authentication required | Authenticate with NVIDIA's documented NGC credentials; never commit tokens. |
 | GPU memory exhausted | Reduce dimensions/reference count. Stop other GPU workloads or duplicate Lab instances. Retry; restart if the CUDA context has failed. |

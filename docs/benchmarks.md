@@ -32,9 +32,9 @@ DGX Spark performance guarantee.
 Stop the app first to avoid loading two model instances. Run on the Spark:
 
 ```bash
-./spark stop
+./persona stop
 docker compose run --rm --no-deps lab python benchmark_batches.py
-./spark start
+./persona start
 ```
 
 Export `LOCAL_UID=$(id -u)` and `LOCAL_GID=$(id -g)` before the direct Compose

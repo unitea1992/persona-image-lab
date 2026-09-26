@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0-alpha.1
+
+- Forked the DGX Spark-focused runtime as Persona Image Lab.
+- Added private, read-only persona presets with optional prompt canon and up to
+  ten combined preset/manual reference images.
+- Simplified the default UI around character preset, prompt, reference images,
+  canvas preset, and generation; low-level size/step/seed controls moved under
+  Advanced.
+- Added `./persona` as the primary Docker helper while retaining `./spark`
+  for upstream compatibility.
+- Renamed public Docker/runtime configuration to Persona Image Lab and documented
+  the boundary between public application code and private character data.
+
 ## Unreleased
 
 - Add confirmed permanent deletion for saved generations and clean up reference

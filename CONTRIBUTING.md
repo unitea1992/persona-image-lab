@@ -1,8 +1,8 @@
 # Contributing
 
-Spark Image Lab is a private alpha focused on DGX Spark / GB10 systems. Preserve
-the straightforward Gradio interface. Discuss support for other hardware or
-models before adding dependencies or alternate execution paths.
+Persona Image Lab is focused on DGX Spark / GB10 systems. Preserve the
+straightforward character-first Gradio interface. Discuss support for other
+hardware or models before adding dependencies or alternate execution paths.
 
 ## Development
 
@@ -10,14 +10,15 @@ CPU-only checks require Python 3.12+ and no model download:
 
 ```bash
 python -B -m unittest discover -s tests -v
-bash -n spark
+bash -n persona spark
 ```
 
 Tests requiring the real Gradio/PyTorch environment run in the container through
-`./spark test`. GPU generation must also be checked on a GB10 machine; GitHub's
+`./persona test`. GPU generation must also be checked on a GB10 machine; GitHub's
 CPU CI is not a substitute. Keep test data synthetic and use temporary output
 directories. Never put real prompts, reference uploads, weights, tokens, or
-generated output folders in a pull request.
+generated output folders in a pull request. Never add real persona manifests,
+identity images, character canon, or machine-specific paths.
 
 Use feature branches and focused commits such as `feat(history): ...`,
 `fix(setup): ...`, or `docs: ...`. Run checks, explain observable behavior changes,
