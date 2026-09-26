@@ -1,5 +1,7 @@
 # Persona Image Lab
 
+[日本語](README.ja.md)
+
 A small, local-first character image studio for **NVIDIA DGX Spark**, powered by
 Qwen-Image-2.1 and Gradio.
 
@@ -46,8 +48,19 @@ cd persona-image-lab
 ./persona start
 ```
 
-Open <http://127.0.0.1:7862/> on the Spark. From another computer, keep the
-application bound to loopback and use an SSH tunnel:
+Open <http://127.0.0.1:7862/> on the Spark. For another computer on the same
+Tailscale tailnet, keep the application bound to loopback and expose it with
+Tailscale Serve:
+
+```bash
+tailscale serve --bg 7862
+```
+
+Then open the HTTPS URL shown by `tailscale serve status`. Tailscale Serve can
+stay configured while Persona Image Lab is stopped; only start the application
+when image generation is needed.
+
+An SSH tunnel remains a useful fallback:
 
 ```bash
 ssh -N -L 7862:127.0.0.1:7862 YOUR_SPARK_SSH_ALIAS

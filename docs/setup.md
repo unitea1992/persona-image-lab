@@ -73,12 +73,28 @@ additive and legacy per-image JSON records remain readable without modification.
 
 ## Networking and Configuration
 
-The Docker host publishes `127.0.0.1:7862`, not a LAN interface. Use NVIDIA Sync's
-SSH alias or a normal SSH connection with local port forwarding. Do not enable
-Gradio public sharing or publish the port on `0.0.0.0` for this alpha.
+The Docker host publishes `127.0.0.1:7862`, not a LAN interface. For machines on
+the same Tailscale tailnet, the recommended remote-access path is Tailscale
+Serve:
+
+```bash
+tailscale serve --bg 7862
+tailscale serve status
+```
+
+Keep the Serve configuration after stopping Persona Image Lab; it does not load
+the image model. Starting the application again restores the same tailnet-only
+HTTPS endpoint. Do not use Tailscale Funnel, Gradio public sharing, or publish
+the Docker port on `0.0.0.0` for this alpha.
+
+SSH local port forwarding remains a fallback when Tailscale Serve is unavailable:
+
+```bash
+ssh -N -L 7862:127.0.0.1:7862 YOUR_SPARK_SSH_ALIAS
+```
 
 If port 7862 is occupied, copy `.env.example` to `.env` and choose a different
-`PERSONA_HTTP_PORT`, then use that port in the browser and SSH tunnel. For example,
+`PERSONA_HTTP_PORT`, then use that port in the browser and remote-access proxy. For example,
 `ssh -N -L 7863:127.0.0.1:7863 YOUR_SPARK_SSH_ALIAS` forwards port 7863.
 
 Advanced direct-Python settings: `PERSONA_MODEL_DIR`, `PERSONA_OUTPUT_DIR`,

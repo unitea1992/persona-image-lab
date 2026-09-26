@@ -5,8 +5,9 @@ account system or per-user history isolation. Anyone who can reach it can read
 generation history, reference copies, and downloadable outputs and submit GPU
 work. Do not expose it publicly or use it as an untrusted multi-tenant service.
 
-The supported Compose configuration binds the host port to loopback. Use SSH
-forwarding for remote access. Keep Gradio sharing disabled. The inference server
+The supported Compose configuration binds the host port to loopback. For remote
+access, use tailnet-only Tailscale Serve or SSH forwarding. Do not use Tailscale
+Funnel, and keep Gradio sharing disabled. The inference server
 serves files from `outputs/`, including reference copies; that directory is not
 a security boundary between local users. Uploads are limited to 25 MB per file,
 ten references per generation, and Pillow's normal image safety checks.

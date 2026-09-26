@@ -18,6 +18,10 @@
 
 - Add confirmed permanent deletion for saved generations and clean up reference
   copies only after their final use.
+- Document tailnet-only Tailscale Serve as the preferred remote-access path while
+  keeping the image-generation container on-demand rather than always running.
+- Add Japanese operator documentation for daily use, private personas,
+  troubleshooting, and selective upstream updates.
 
 ## 0.1.0-alpha.2 - 2026-09-20
 
