@@ -42,6 +42,13 @@ class PersonaProfileTests(unittest.TestCase):
             (broken / "persona.json").write_text("{not json")
             self.assertEqual([profile.identifier for profile in load_personas(root)], ["valid"])
 
+    def test_unreadable_prompt_does_not_hide_valid_profiles(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.make_profile(root, "valid")
+            broken = self.make_profile(root, "broken")
+            (broken / "canon.md").write_bytes(b"\xff\xfe")
+            self.assertEqual([profile.identifier for profile in load_personas(root)], ["valid"])
+
     def test_rejects_reference_escape_and_symlink(self):
         with tempfile.TemporaryDirectory() as root:
             outside = Path(root).parent / "outside.png"

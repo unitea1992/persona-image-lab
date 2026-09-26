@@ -29,14 +29,18 @@ files. Run it as your ordinary user, not through `sudo`, after configuring
 Docker access on the host. A root-owned model/output directory from an earlier
 manual install may need its ownership corrected by its administrator.
 
-Docker builds use an allowlisted context containing only the Dockerfile and
-requirements. The application source is bind-mounted at runtime. Model weights,
-prompts, generated images, credentials, and `.git` never enter the build context.
+Docker builds use an allowlisted context containing the application source,
+tests, version metadata, Dockerfile, and requirements needed by the image.
+Model weights, prompts, generated images, credentials, private persona data,
+and `.git` never enter the build context. The application checkout is not
+mounted into the running container.
 
 Private persona data is mounted separately at `/persona-data` and is read-only
 to the application. The default host directory is `./data/personas`, which is
 Git-ignored. Set `PERSONA_DATA_DIR` in `.env` to keep real persona files
-outside the checkout.
+outside the checkout. Writable mounts are limited to `model/`, `outputs/`, and
+`cache/`. The launcher rejects `PERSONA_DATA_DIR` if it overlaps any of those
+writable directories.
 
 ## Start, Stop, and Upgrade
 

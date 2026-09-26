@@ -134,7 +134,8 @@ def build_app():
     }
     personas = load_personas()
     persona_choices = [("No character preset", "")] + [
-        (profile.name, profile.identifier) for profile in personas
+        (f"{profile.name} · {profile.identifier}", profile.identifier)
+        for profile in personas
     ]
 
     def stats_text(stats):
@@ -278,15 +279,19 @@ def build_app():
                                   interactive=False, height=620, elem_id="result-panel")
                 reuse = gr.Button("Use result as extra reference")
                 stats = gr.Textbox(label="Generation", interactive=False)
-                files = gr.File(label="PNG and generation record", file_count="multiple")
-                with gr.Accordion("Delete selected history item", open=False):
+                with gr.Accordion("Downloads and history actions", open=False):
+                    files = gr.File(label="PNG and generation record", file_count="multiple")
                     delete_confirm = gr.Checkbox(label="Confirm permanent deletion", value=False)
                     delete = gr.Button("Delete permanently", variant="stop")
-        history = gr.Dataset(components=[prompt, gr.Textbox(render=False), width, height, steps, seed, gr.Number(render=False)],
-                             headers=["Prompt", "Reference images", "Width", "Height", "Steps", "Seed", "Time (s)"],
-                             samples=[], type="index", layout="table", samples_per_page=10,
-                             label="Generation history", elem_id="generation-history")
-        gallery = gr.Gallery(label="Generated images", columns=4, height=320, preview=False)
+        gallery = gr.Gallery(label="Recent generations", columns=4, height=320, preview=False)
+        with gr.Accordion("Generation history", open=False):
+            history = gr.Dataset(
+                components=[prompt, gr.Textbox(render=False), width, height, steps, seed,
+                            gr.Number(render=False)],
+                headers=["Prompt", "Reference images", "Width", "Height", "Steps", "Seed", "Time (s)"],
+                samples=[], type="index", layout="table", samples_per_page=10,
+                label=None, elem_id="generation-history",
+            )
         refresh_outputs = [history, gallery, identifiers]
         restore_outputs = [persona, prompt, refs, size_preset, width, height, steps, seed,
                            randomize_seed, result, files, stats,

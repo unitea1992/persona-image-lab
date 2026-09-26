@@ -112,7 +112,7 @@ def load_personas(root=PERSONA_DIR):
             continue
         try:
             profile = _load_profile(directory)
-        except ValueError as error:
+        except (ValueError, OSError, UnicodeError) as error:
             LOG.warning("Skipping invalid persona preset %s: %s", directory.name, error)
             continue
         if profile is not None:
@@ -130,7 +130,10 @@ def get_persona(identifier, root=PERSONA_DIR):
     resolved = directory.resolve()
     if directory.is_symlink() or not resolved.is_relative_to(root) or not directory.is_dir():
         raise ValueError("Persona preset is unavailable.")
-    profile = _load_profile(directory)
+    try:
+        profile = _load_profile(directory)
+    except (OSError, UnicodeError) as error:
+        raise ValueError("Persona preset is unavailable.") from error
     if profile is None:
         raise ValueError("Persona preset is unavailable.")
     return profile

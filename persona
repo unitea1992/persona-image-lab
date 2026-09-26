@@ -6,8 +6,20 @@ export LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)"
 command -v docker >/dev/null || { printf 'Docker is required. See docs/setup.md.\n' >&2; exit 1; }
 docker compose version >/dev/null
 
-persona_data_dir="${PERSONA_DATA_DIR:-./data/personas}"
-mkdir -p -- "$persona_data_dir"
+compose_persona_data_dir="$({ docker compose config --environment 2>/dev/null || true; } | sed -n 's/^PERSONA_DATA_DIR=//p' | tail -n 1)"
+persona_data_dir="${compose_persona_data_dir:-./data/personas}"
+repo_root="$(pwd -P)"
+persona_data_abs="$(realpath -m -- "$persona_data_dir")"
+for writable in "$repo_root/model" "$repo_root/outputs" "$repo_root/cache"; do
+  writable="$(realpath -m -- "$writable")"
+  if [[ "$persona_data_abs" == "$writable" ||
+        "$persona_data_abs" == "$writable"/* ||
+        "$writable" == "$persona_data_abs"/* ]]; then
+    printf 'PERSONA_DATA_DIR must not overlap model, outputs, or cache.\n' >&2
+    exit 2
+  fi
+done
+mkdir -p -- ./model ./outputs ./cache "$persona_data_dir"
 
 command="${1:-help}"
 if (($#)); then shift; fi

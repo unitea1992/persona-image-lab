@@ -2,3 +2,8 @@
 !Dockerfile
 !requirements.txt
 !security-requirements.txt
+!*.py
+!demos.json
+!VERSION
+!tests/
+!tests/**

@@ -17,9 +17,13 @@ Build/download steps still contact NVIDIA, package registries, GitHub, and Huggi
 Face. Updating dependencies and reviewing their advisories is a release duty.
 
 Private persona data is mounted read-only and is excluded from Git by design.
+The repository checkout is not mounted into the running application container,
+so the default ignored persona directory cannot be reached through a second
+writable mount.
 Persona manifests may only reference regular files inside their own persona
 directory; absolute paths, directory escapes, and symlinked referenced files are
-rejected. Generated history may contain copies of persona references, so keep the
+rejected. The launcher also rejects host persona directories that overlap the
+writable model, output, or cache mounts. Generated history may contain copies of persona references, so keep the
 `outputs/` directory private as well.
 
 Report vulnerabilities privately through the repository's **Security** tab by
