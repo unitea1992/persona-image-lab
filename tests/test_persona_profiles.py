@@ -16,6 +16,7 @@ class PersonaProfileTests(unittest.TestCase):
             "schema_version": 1,
             "name": "Sample Character",
             "description": "Synthetic test preset",
+            "prompt_prefix": "Reference image 1 defines the character identity.",
             "prompt_file": "canon.md",
             "references": [{"label": "Identity", "path": "identity.png"}],
         }))
@@ -29,10 +30,12 @@ class PersonaProfileTests(unittest.TestCase):
             profile = profiles[0]
             self.assertEqual(profile.identifier, "sample")
             self.assertEqual(profile.reference_labels, ("Identity",))
-            self.assertEqual(
-                compose_prompt(profile, "Standing beside a window."),
-                "Keep the silver bob haircut.\n\nStanding beside a window.",
-            )
+            effective = compose_prompt(profile, "Standing beside a window.")
+            self.assertIn("Reference image 1 defines the character identity.", effective)
+            self.assertIn("Standing beside a window.", effective)
+            self.assertIn("Do not render prompt text", effective)
+            self.assertNotIn("Keep the silver bob haircut.", effective)
+            self.assertTrue(effective.startswith("Standing beside a window."))
 
     def test_invalid_profile_does_not_hide_valid_profiles(self):
         with tempfile.TemporaryDirectory() as root:

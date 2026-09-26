@@ -22,6 +22,10 @@
   keeping the image-generation container on-demand rather than always running.
 - Add Japanese operator documentation for daily use, private personas,
   troubleshooting, and selective upstream updates.
+- Stop injecting full persona canon Markdown into Qwen-Image prompts; keep a
+  concise reference-role instruction and restore only the original user prompt.
+- Simplify and localize the Gradio studio UI in Japanese, surface deletion next
+  to the selected result, and report denoising step progress with an ETA.
 
 ## 0.1.0-alpha.2 - 2026-09-20
 

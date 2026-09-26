@@ -34,6 +34,7 @@ private-personas/
   "schema_version": 1,
   "name": "Sample Character",
   "description": "Private local character preset",
+  "prompt_prefix": "Reference image 1 defines this character's identity. Keep the same person and follow the user's scene request.",
   "prompt_file": "visual-canon.md",
   "references": [
     {"label": "Identity", "path": "identity.png"},
@@ -42,7 +43,9 @@ private-personas/
 }
 ```
 
-`prompt_file` には、キャラクターの外見や生成時に維持したい条件を書きます。短い固定文だけなら `prompt_prefix` も使えます。
+`prompt_prefix` はQwen-Image-2.1へ実際に渡す短い固定指示です。本人参照が何枚目か、どの画像を本人性や全身比率の基準にするか、といった参照画像の役割を簡潔に書きます。
+
+`prompt_file` には詳しい視覚正本を置けますが、その本文は生成Promptへ連結しません。長いMarkdown設定を画像モデルへそのまま渡すと、文字入りの設定資料として描画されることがあるためです。
 
 ## 参照画像は合計10枚まで
 

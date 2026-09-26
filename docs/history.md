@@ -33,7 +33,10 @@ Version 1 records contain:
 
 - `schema_version`, app version, `id`, and UTC `created_at`.
 - Model identifier, pinned revision, and relevant library versions.
-- Prompt, width, height, steps, seed, guidance, and KV-cache settings.
+- Effective model prompt, width, height, steps, seed, guidance, and KV-cache settings.
+- The original `user_prompt` when generated through the UI, so restoring a
+  generation puts only the user's text back into the prompt field instead of
+  exposing internal persona instructions.
 - Optional local persona identifier/name context when a persona preset was used.
 - `elapsed_seconds`, `peak_allocated_gib`, image mode, and alpha extrema.
 - Reference filename, content hash, and relative persistent path.

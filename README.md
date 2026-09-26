@@ -115,6 +115,7 @@ Example `persona.json`:
   "schema_version": 1,
   "name": "Sample Character",
   "description": "Private local character preset",
+  "prompt_prefix": "Reference image 1 defines this character's identity. Keep the same person and follow the user's scene request.",
   "prompt_file": "visual-canon.md",
   "references": [
     {"label": "Identity", "path": "identity.png"},
@@ -123,7 +124,15 @@ Example `persona.json`:
 }
 ```
 
-`prompt_prefix` may be used instead of, or together with, `prompt_file`.
+`prompt_prefix` is the concise instruction sent to Qwen-Image together with the
+user's prompt. Keep it short and describe the role of the reference images rather
+than pasting a character specification sheet into the model prompt.
+
+`prompt_file` is optional private canon/documentation. It is validated and kept
+with the preset, but its Markdown contents are **not** concatenated into the model
+prompt. This prevents long character sheets from being interpreted as visible
+text or a reference-sheet layout.
+
 Persona references and manually uploaded references may total at most ten
 images, matching the current Qwen-Image-2.1 workflow.
 

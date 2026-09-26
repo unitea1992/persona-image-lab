@@ -59,18 +59,18 @@ def _load_profile(directory):
     if not isinstance(description, str) or len(description) > 240:
         raise ValueError(f"{directory.name}: description must be at most 240 characters.")
 
-    prompt_parts = []
     prompt_prefix = data.get("prompt_prefix", "")
     if not isinstance(prompt_prefix, str):
         raise ValueError(f"{directory.name}: prompt_prefix must be text.")
-    if prompt_prefix.strip():
-        prompt_parts.append(prompt_prefix.strip())
     prompt_file = data.get("prompt_file")
     if prompt_file is not None:
         prompt_path = _safe_child(directory, prompt_file, TEXT_SUFFIXES)
         if prompt_path.stat().st_size > MAX_PROMPT_BYTES:
             raise ValueError(f"{directory.name}: prompt file is too large.")
-        prompt_parts.append(prompt_path.read_text().strip())
+        # The prompt file is private canon/documentation, not a model prompt.
+        # Read it here so invalid UTF-8 still makes the preset fail closed, but
+        # never concatenate long Markdown canon into Qwen-Image instructions.
+        prompt_path.read_text()
 
     references = data.get("references", [])
     if not isinstance(references, list) or len(references) > 10:
@@ -96,7 +96,7 @@ def _load_profile(directory):
         identifier=directory.name,
         name=name.strip(),
         description=description.strip(),
-        prompt_prefix="\n\n".join(part for part in prompt_parts if part),
+        prompt_prefix=prompt_prefix.strip(),
         references=tuple(reference_paths),
         reference_labels=tuple(labels),
     )
@@ -143,4 +143,12 @@ def compose_prompt(profile, prompt):
     prompt = prompt.strip()
     if profile is None or not profile.prompt_prefix:
         return prompt
-    return f"{profile.prompt_prefix}\n\n{prompt}"
+    visible_text_guard = (
+        "Do not render prompt text, captions, labels, character-sheet notes, "
+        "UI, signatures, or annotations unless the user explicitly asks for visible text."
+    )
+    return (
+        f"{prompt}\n\n"
+        f"Use the reference images only as follows: {profile.prompt_prefix}\n\n"
+        f"{visible_text_guard}"
+    )
