@@ -19,6 +19,10 @@ jobs:
       - name: Shell syntax
         run: bash -n persona
       - name: Python syntax
-        run: python -m compileall -q lab.py history.py settings.py manage.py persona_profiles.py benchmark_batches.py
+        run: python -m compileall -q lab.py history.py settings.py manage.py persona_profiles.py benchmark_batches.py scripts/check_branding.py
+      - name: Upstream branding boundary
+        run: python scripts/check_branding.py
+      - name: Public commit identity
+        run: python scripts/check_commit_identity.py
       - name: Compose configuration
         run: docker compose config --quiet

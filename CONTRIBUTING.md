@@ -26,6 +26,12 @@ include sanitized desktop/mobile screenshots for UI work, and record GPU checks
 or explicitly state they were not run. Preserve backward readability of stored
 history. Changes to pinned dependencies or inference settings need a new benchmark.
 
+## Upstream changes
+
+Do not automatically merge or use GitHub's Sync fork action against `main`.
+Fetch upstream, review the new commits, and selectively cherry-pick or port only
+the changes that still apply to Persona Image Lab. See [docs/upstream.md](docs/upstream.md).
+
 ## Review Checklist
 
 - Inputs validated and failure cases covered.
@@ -34,6 +40,7 @@ history. Changes to pinned dependencies or inference settings need a new benchma
 - Loopback-only host binding and disabled public sharing preserved.
 - README, changelog, and tests updated when behavior changes.
 - Model and third-party licenses respected; dependency notices retained.
+- Upstream branding appears only in the intentional attribution allowlist.
 
 By contributing, you agree to license your original contributions under this
 repository's MIT license. Do not contribute materials you lack permission to share.

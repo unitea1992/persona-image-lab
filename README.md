@@ -152,7 +152,9 @@ be restored without the persona preset remaining installed.
 Persona Image Lab is derived from
 [joeynyc/spark-image-lab](https://github.com/joeynyc/spark-image-lab). The
 upstream MIT license and copyright notice are preserved in this repository.
-See [NOTICE](NOTICE) for model and third-party notices.
+The fork relationship is retained for attribution and change discovery, but
+upstream changes are reviewed and selectively ported rather than merged or
+synced automatically. See [upstream policy](docs/upstream.md) and [NOTICE](NOTICE).
 
 The application code is MIT licensed. Model weights are downloaded separately
 and remain subject to their own terms.
