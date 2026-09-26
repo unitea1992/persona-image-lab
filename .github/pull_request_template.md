@@ -1,6 +1,7 @@
 ## Change
 
-Describe the user-visible change and why it belongs in a DGX Spark-focused tool.
+Describe the user-visible change and why it belongs in a DGX Spark-focused,
+character-first tool.
 
 ## Verification
 
@@ -9,7 +10,7 @@ Describe the user-visible change and why it belongs in a DGX Spark-focused tool.
 - [ ] GPU generation/edit tested, or marked not run below.
 - [ ] Desktop/mobile UI checked for UI changes.
 - [ ] History backward compatibility preserved.
-- [ ] No private images, prompts, credentials, or model weights included.
+- [ ] No private persona data, images, prompts, credentials, local paths, or model weights included.
 - [ ] Documentation and changelog updated as needed.
 
 Hardware, commands, results, screenshots, and unverified items:

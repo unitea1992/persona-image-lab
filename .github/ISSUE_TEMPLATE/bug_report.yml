@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible Spark Image Lab problem.
+description: Report a reproducible Persona Image Lab problem.
 labels: [bug]
 body:
   - type: textarea

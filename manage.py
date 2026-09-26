@@ -74,6 +74,8 @@ def model_install_error(directory):
 
 def doctor(require_model=False):
     import torch
+    from persona_profiles import load_personas
+    from settings import PERSONA_DIR
 
     failures = []
     print(f"Architecture: {platform.machine()}")
@@ -95,8 +97,10 @@ def doctor(require_model=False):
         failures.append(str(error))
     model_error = model_install_error(MODEL_DIR)
     print("Model: " + (model_error or "required files and revision verified"))
+    personas = load_personas()
+    print(f"Persona presets: {len(personas)} ({PERSONA_DIR})")
     if require_model and model_error:
-        failures.append(model_error + " Run ./spark download --accept-model-license.")
+        failures.append(model_error + " Run ./persona download --accept-model-license.")
     for failure in failures:
         print(f"ERROR: {failure}", file=sys.stderr)
     return 1 if failures else 0
