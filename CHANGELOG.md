@@ -8,10 +8,11 @@
 - Simplified the default UI around character preset, prompt, reference images,
   canvas preset, and generation; low-level size/step/seed controls moved under
   Advanced.
-- Added `./persona` as the primary Docker helper while retaining `./spark`
-  for upstream compatibility.
+- Added `./persona` as the Docker helper for build, setup, run, logs, and tests.
 - Renamed public Docker/runtime configuration to Persona Image Lab and documented
   the boundary between public application code and private character data.
+- Removed upstream runtime compatibility names after validating the fork on a
+  GB10 system with the pinned Qwen-Image-2.1 model and persona-reference path.
 
 ## Unreleased
 

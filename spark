@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
-printf 'The ./spark helper is kept for upstream compatibility; use ./persona for new installs.\n' >&2
-exec ./persona "$@"
