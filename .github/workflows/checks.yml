@@ -17,8 +17,8 @@ jobs:
       - name: CPU unit tests
         run: python -B -m unittest discover -s tests -v
       - name: Shell syntax
-        run: bash -n spark
+        run: bash -n persona spark
       - name: Python syntax
-        run: python -m compileall -q lab.py history.py settings.py manage.py benchmark_batches.py
+        run: python -m compileall -q lab.py history.py settings.py manage.py persona_profiles.py benchmark_batches.py
       - name: Compose configuration
         run: docker compose config --quiet

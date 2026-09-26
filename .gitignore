@@ -1,6 +1,7 @@
 cache/
 model/
 outputs/
+data/
 __pycache__/
 *.log
 backups/

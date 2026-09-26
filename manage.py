@@ -96,7 +96,7 @@ def doctor(require_model=False):
     model_error = model_install_error(MODEL_DIR)
     print("Model: " + (model_error or "required files and revision verified"))
     if require_model and model_error:
-        failures.append(model_error + " Run ./spark download --accept-model-license.")
+        failures.append(model_error + " Run ./persona download --accept-model-license.")
     for failure in failures:
         print(f"ERROR: {failure}", file=sys.stderr)
     return 1 if failures else 0
