@@ -9,7 +9,8 @@
 - Internet for the container build and one-time model download.
 - At least 80 GiB free initially; outputs and reference copies continue to grow.
 
-The tested driver is 580.173.02. The base image is
+Persona Image Lab has been validated on driver 580.178.04. The upstream
+benchmark baseline used 580.173.02. The base image is
 `nvcr.io/nvidia/pytorch:26.08-py3`; the NVIDIA container supplies PyTorch/CUDA.
 Do not replace it with an x86 container or an arbitrary PyTorch wheel.
 See NVIDIA's [DGX Spark documentation](https://docs.nvidia.com/dgx/dgx-spark/)
@@ -85,10 +86,3 @@ Advanced direct-Python settings: `PERSONA_MODEL_DIR`, `PERSONA_OUTPUT_DIR`,
 the container to listen on its internal interface and restricts access at the
 host. Keep the default model revision; replacing model files manually can make
 generation provenance inaccurate and is outside this release's support scope.
-
-## Existing Prototype
-
-An earlier manually started container named `spark-image-lab` must be stopped
-before starting Compose on the same port. Do not run both model processes at
-once. Keep its original source and container for rollback until validation
-finishes. Copy source only, retaining the existing `model/` and `outputs/`.

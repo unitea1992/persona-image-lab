@@ -10,7 +10,7 @@ CPU-only checks require Python 3.12+ and no model download:
 
 ```bash
 python -B -m unittest discover -s tests -v
-bash -n persona spark
+bash -n persona
 ```
 
 Tests requiring the real Gradio/PyTorch environment run in the container through

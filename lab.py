@@ -320,10 +320,8 @@ def serve():
 
     prepare_output_directory()
     pipeline()
-    build_app().launch(server_name=os.environ.get("PERSONA_HOST",
-                                                  os.environ.get("SPARK_HOST", "127.0.0.1")),
-                       server_port=int(os.environ.get("PERSONA_PORT",
-                                                      os.environ.get("SPARK_PORT", "7860"))), share=False,
+    build_app().launch(server_name=os.environ.get("PERSONA_HOST", "127.0.0.1"),
+                       server_port=int(os.environ.get("PERSONA_PORT", "7860")), share=False,
                        allowed_paths=[str(OUTPUTS)], footer_links=[], run_history=False,
                        max_file_size="25mb",
                        theme=gr.themes.Base(primary_hue="emerald", neutral_hue="slate"),

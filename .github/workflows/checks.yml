@@ -17,7 +17,7 @@ jobs:
       - name: CPU unit tests
         run: python -B -m unittest discover -s tests -v
       - name: Shell syntax
-        run: bash -n persona spark
+        run: bash -n persona
       - name: Python syntax
         run: python -m compileall -q lab.py history.py settings.py manage.py persona_profiles.py benchmark_batches.py
       - name: Compose configuration
