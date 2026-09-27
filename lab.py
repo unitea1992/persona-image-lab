@@ -22,7 +22,8 @@ from history import (delete_generation, load_history, restore_generation,
                      save_generation, validate_request)
 from manage import model_install_error
 from persona_profiles import compose_prompt, get_persona, load_personas
-from prompt_enhancer import PromptEnhancerError, enhance_prompt
+from prompt_enhancer import (PromptEnhancerCancelled, PromptEnhancerError,
+                             enhance_prompt)
 from settings import (APP_VERSION, MODEL_DIR, MODEL_ID, MODEL_REVISION, OUTPUTS,
                       PROMPT_ENHANCER_ENABLED, ROOT, prepare_output_directory)
 
@@ -30,6 +31,42 @@ DEMOS = json.loads((ROOT / "demos.json").read_text())
 LOCK = threading.Lock()
 HISTORY_LOCK = threading.Lock()
 PIPE = None
+_GENERATION_CANCEL_LOCK = threading.Lock()
+_ACTIVE_GENERATION_CANCEL = None
+
+
+class GenerationCancelled(RuntimeError):
+    pass
+
+
+def _new_generation_cancel_event():
+    global _ACTIVE_GENERATION_CANCEL
+    event = threading.Event()
+    with _GENERATION_CANCEL_LOCK:
+        if _ACTIVE_GENERATION_CANCEL is not None:
+            _ACTIVE_GENERATION_CANCEL.set()
+        _ACTIVE_GENERATION_CANCEL = event
+    return event
+
+
+def _current_generation_cancel_event():
+    with _GENERATION_CANCEL_LOCK:
+        return _ACTIVE_GENERATION_CANCEL
+
+
+def _request_generation_cancel():
+    event = _current_generation_cancel_event()
+    if event is None:
+        return False
+    event.set()
+    return True
+
+
+def _clear_generation_cancel_event(event):
+    global _ACTIVE_GENERATION_CANCEL
+    with _GENERATION_CANCEL_LOCK:
+        if _ACTIVE_GENERATION_CANCEL is event:
+            _ACTIVE_GENERATION_CANCEL = None
 APP_CSS = """
 .gradio-container {
   max-width: none !important;
@@ -54,8 +91,44 @@ APP_CSS = """
 }
 #history-toolbar { align-items: center; margin-top: 0.75rem; }
 #batch-selection-status { min-height: 1.5rem; opacity: 0.78; }
-#delete-confirmation { border-left: 3px solid var(--color-accent); padding-left: 0.8rem; }
+#delete-confirmation, #batch-delete-confirmation {
+  width: min(100%, 440px);
+  margin-left: auto;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border-color-primary);
+  border-radius: var(--radius-lg);
+  background: var(--background-fill-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+#delete-confirmation p, #batch-delete-confirmation p { margin: 0 0 0.5rem; }
+#delete-confirmation button, #batch-delete-confirmation button { min-height: 2.4rem; }
 #recent-generations { margin-top: 0.75rem; }
+#recent-generations .thumbnail-item { position: relative; }
+#recent-generations .caption-label {
+  position: absolute !important;
+  top: 0.4rem !important;
+  right: 0.4rem !important;
+  bottom: auto !important;
+  left: auto !important;
+  display: grid !important;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  min-width: 1.7rem;
+  padding: 0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 999px;
+  background: rgba(20, 24, 31, 0.68) !important;
+  color: white !important;
+  font-size: 1rem;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(4px);
+}
+#recent-generations .thumbnail-item:has(img[alt="☑"]) .caption-label {
+  border-color: var(--color-accent);
+  background: var(--color-accent) !important;
+}
 #result-panel button[aria-label="Share"],
 #result-panel button[aria-label="共有"],
 #recent-generations button[aria-label="Share"],
@@ -123,6 +196,11 @@ def _decode_preview(pipe, packed_latents, width, height):
     return pipe.image_processor.postprocess(decoded, output_type="pil")[0]
 
 
+def preview_steps_for(steps):
+    candidates = {max(1, round(steps * 0.90)), max(1, steps - 1)}
+    return {step for step in candidates if step < steps}
+
+
 def validate_manual_references(references):
     gradio_temp = Path(
         os.environ.get("GRADIO_TEMP_DIR", Path(tempfile.gettempdir()) / "gradio")
@@ -141,10 +219,12 @@ def validate_manual_references(references):
 
 def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42,
              context=None, user_prompt=None, progress_callback=None,
-             preview_callback=None, enhancer=None):
+             preview_callback=None, enhancer=None, cancel_event=None):
     import torch
 
     prepare_output_directory()
+    if cancel_event is not None and cancel_event.is_set():
+        raise GenerationCancelled("Generation was cancelled.")
     prompt, width, height, steps, seed = validate_request(prompt, width, height, steps, seed)
     references = references or []
     if len(references) > 10:
@@ -158,11 +238,10 @@ def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         started = time.perf_counter()
-        preview_steps = {
-            max(1, round(steps / 3)),
-            max(1, round(steps * 2 / 3)),
-        }
+        preview_steps = preview_steps_for(steps)
         def on_step_end(_pipe, step_index, _timestep, callback_kwargs):
+            if cancel_event is not None and cancel_event.is_set():
+                raise GenerationCancelled("Generation was cancelled.")
             step = step_index + 1
             if progress_callback is not None:
                 progress_callback(step, steps)
@@ -174,6 +253,8 @@ def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42
             return callback_kwargs
 
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise GenerationCancelled("Generation was cancelled.")
             image = pipe(
                 prompt=prompt, image=images or None, width=width, height=height,
                 num_inference_steps=steps, true_cfg_scale=1.0, use_kv_cache=True,
@@ -304,10 +385,11 @@ def build_app():
         return (f"**完了** ・ {prefix}{stats.get('elapsed_seconds', 0):.1f}秒 ・ "
                 f"{stats['width']} × {stats['height']} ・ Seed {stats['seed']}")
 
-    def gallery_values(entries, selected_ids=None):
+    def gallery_values(entries, selected_ids=None, selection_mode=False):
         selected = set(selected_ids or [])
         return [
-            (entry['image_path'], "選択中" if entry['id'] in selected else None)
+            (entry['image_path'], ("☑" if entry['id'] in selected else "☐")
+             if selection_mode else None)
             for entry in entries
         ]
 
@@ -332,7 +414,9 @@ def build_app():
     def execute_generation(persona_id, prompt, refs, size_preset, width, height, steps, seed,
                            randomize_seed, use_enhancer=True, live_preview=False,
                            status_callback=None, progress_callback=None, preview_callback=None,
-                           warning_callback=None):
+                           warning_callback=None, cancel_event=None):
+        if cancel_event is not None and cancel_event.is_set():
+            raise GenerationCancelled("Generation was cancelled.")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("プロンプトを入力してください。")
         profile = get_persona(persona_id)
@@ -364,19 +448,27 @@ def build_app():
             if status_callback:
                 status_callback("短い指示を具体化しています…")
             try:
-                enhanced = enhance_prompt(base_prompt, references, seed=42)
+                enhanced = enhance_prompt(
+                    base_prompt, references, seed=42, cancel_event=cancel_event
+                )
                 effective_prompt = enhanced["rewritten_prompt"]
                 enhancer_metadata = {"enabled": True, **enhanced}
                 if dimensions == "auto":
                     suggested = enhancer_dimensions(enhanced, references)
                     if suggested is not None:
                         width, height = suggested
+            except PromptEnhancerCancelled as error:
+                raise GenerationCancelled("Generation was cancelled.") from error
             except PromptEnhancerError as error:
-                logging.warning("Prompt enhancer fallback: %s", error)
-                enhancer_metadata = {"enabled": True, "fallback": True, "error": str(error)}
-                if warning_callback:
-                    warning_callback("Prompt自動補完に失敗したため、入力した指示をそのまま使います。")
+                logging.warning("Prompt enhancer failed after retry: %s", error)
+                raise ValueError(
+                    "Prompt自動補完に失敗しました。自動再試行でも復旧できなかったため、"
+                    "画像生成を中止しました。もう一度生成するか、必要なら詳細設定から"
+                    "『短い指示を自動で具体化』をOFFにしてください。"
+                ) from error
 
+        if cancel_event is not None and cancel_event.is_set():
+            raise GenerationCancelled("Generation was cancelled.")
         if status_callback:
             status_callback("画像生成を準備中…")
         return generate(
@@ -384,12 +476,14 @@ def build_app():
             context=context, user_prompt=prompt, progress_callback=progress_callback,
             preview_callback=preview_callback if live_preview else None,
             enhancer=enhancer_metadata,
+            cancel_event=cancel_event,
         )
 
     def run_with_progress(persona_id, prompt, refs, size_preset, width, height, steps, seed,
                           randomize_seed, use_enhancer, live_preview,
                           progress=gr.Progress()):
         events = queue.Queue()
+        cancel_event = _current_generation_cancel_event() or _new_generation_cancel_event()
 
         def worker():
             try:
@@ -400,10 +494,15 @@ def build_app():
                     progress_callback=lambda step, total: events.put(("progress", step, total)),
                     preview_callback=lambda step, total, image: events.put(("preview", step, total, image)),
                     warning_callback=lambda message: events.put(("warning", message)),
+                    cancel_event=cancel_event,
                 )
                 events.put(("final", result))
+            except GenerationCancelled:
+                events.put(("cancelled", None))
             except BaseException as error:
                 events.put(("error", error))
+            finally:
+                _clear_generation_cancel_event(cancel_event)
 
         threading.Thread(target=worker, daemon=True).start()
         generation_started = None
@@ -415,7 +514,7 @@ def build_app():
                     generation_started = time.perf_counter()
                 progress(0, desc=event[1])
                 yield (gr.skip(), gr.skip(), f"**{event[1]}**", gr.skip(), gr.skip(),
-                       gr.skip(), gr.skip(), True)
+                       gr.skip(), gr.skip(), True, gr.skip(), gr.skip())
                 continue
             if kind == "progress":
                 _, step, total = event
@@ -428,22 +527,28 @@ def build_app():
                     description = f"生成中 {step}/{total} ・ 残り約{remaining:.0f}秒"
                 progress((step, total), desc=description)
                 yield (gr.skip(), gr.skip(), f"**{description}**", gr.skip(), gr.skip(),
-                       gr.skip(), gr.skip(), True)
+                       gr.skip(), gr.skip(), True, gr.skip(), gr.skip())
                 continue
             if kind == "preview":
                 _, step, total, image = event
                 description = f"生成中 {step}/{total} ・ プレビュー更新"
                 progress((step, total), desc=description)
                 yield (image, gr.skip(), f"**{description}**", gr.skip(), gr.skip(),
-                       gr.skip(), gr.skip(), True)
+                       gr.skip(), gr.skip(), True, gr.skip(), gr.skip())
                 continue
             if kind == "warning":
                 gr.Warning(event[1])
                 continue
+            if kind == "cancelled":
+                yield (gr.skip(), gr.skip(), "**停止しました。生成結果は保存していません。**",
+                       gr.skip(), gr.skip(), gr.skip(), gr.skip(), False,
+                       gr.Button(interactive=True), gr.Button(visible=False, interactive=True))
+                return
             if kind == "error":
                 error = event[1]
                 yield (gr.skip(), gr.skip(), "**生成に失敗しました**", gr.skip(), gr.skip(),
-                       gr.skip(), gr.skip(), False)
+                       gr.skip(), gr.skip(), False,
+                       gr.Button(interactive=True), gr.Button(visible=False, interactive=True))
                 if isinstance(error, ValueError):
                     raise gr.Error(str(error)) from error
                 if isinstance(error, TorchOutOfMemoryError):
@@ -453,7 +558,8 @@ def build_app():
                     raise gr.Error("画像を読み込むか、生成結果を保存できませんでした。画像ファイルと空き容量を確認してください。") from error
                 raise error
             image, metadata, stats = event[1]
-            yield image, [image, metadata], stats_text(stats), *refresh(), stats["id"], False
+            yield (image, [image, metadata], stats_text(stats), *refresh(), stats["id"], False,
+                   gr.Button(interactive=True), gr.Button(visible=False, interactive=True))
             return
 
     def run(persona_id, prompt, refs, size_preset, width, height, steps, seed, randomize_seed):
@@ -475,9 +581,18 @@ def build_app():
         return gr.Row(visible=size_preset == "カスタム")
 
     def begin_generation():
+        _new_generation_cancel_event()
+        entries = load_history(OUTPUTS)
         return (True, "**生成を開始しています…**", False, [],
                 gr.Markdown(value="", visible=False), gr.Button(visible=False),
-                gr.Group(visible=False), gr.Button(interactive=True))
+                gr.Group(visible=False), gr.Button(interactive=True),
+                gr.Button(value="選択"), gallery_values(entries),
+                gr.Button(interactive=False), gr.Button(visible=True, interactive=True))
+
+    def request_stop_generation():
+        if not _request_generation_cancel():
+            return "**停止対象の生成はありません。**", gr.Button(visible=False)
+        return "**停止しています…**", gr.Button(visible=True, interactive=False)
 
     def restore(index, identifiers):
         if not isinstance(index, int) or not 0 <= index < len(identifiers):
@@ -531,7 +646,8 @@ def build_app():
             selected = toggle_batch_selection(event.index, identifiers, selected_ids)
             entries = load_history(OUTPUTS)
             status = f"**{len(selected)}件選択中**" if selected else "画像をクリックして選択します。"
-            return (*([gr.skip()] * 13), selected, gallery_values(entries, selected),
+            return (*([gr.skip()] * 13), selected,
+                    gallery_values(entries, selected, selection_mode=True),
                     gr.Markdown(value=status, visible=True),
                     gr.Button(visible=bool(selected)))
         return (*restore(event.index, identifiers), selected_ids, gr.skip(), gr.skip(), gr.skip())
@@ -550,19 +666,22 @@ def build_app():
         return gr.Group(visible=False)
 
     def toggle_batch_mode(enabled):
+        enabled = not enabled
         entries = load_history(OUTPUTS)
         status = "画像をクリックして選択します。" if enabled else ""
-        return ([], gallery_values(entries),
+        return (enabled, [], gallery_values(entries, selection_mode=enabled),
                 gr.Markdown(value=status, visible=enabled),
                 gr.Button(visible=False), gr.Group(visible=False),
-                gr.Button(interactive=not enabled))
+                gr.Button(interactive=not enabled),
+                gr.Button(value="選択を終了" if enabled else "選択"))
 
     def request_batch_delete(selected_ids):
         count = len(selected_ids or [])
         if not count:
             raise gr.Error("削除する生成結果を選んでください。")
-        return (gr.Markdown(value=f"**選択した{count}件を完全に削除します。** 元に戻せません。"),
-                gr.Group(visible=True))
+        return (gr.Markdown(value=f"**選択した{count}件を削除します。** 元に戻せません。"),
+                gr.Group(visible=True),
+                gr.Button(value="削除する" if count == 1 else f"{count}件を削除"))
 
     def delete_batch(selected_ids):
         identifiers_to_delete = list(dict.fromkeys(selected_ids or []))
@@ -579,9 +698,10 @@ def build_app():
         except OSError as error:
             logging.exception("Batch generation deletion failed")
             raise gr.Error("生成結果を完全に削除できませんでした。出力先の権限を確認してください。") from error
-        return (None, None, "", None, [],
-                gr.Markdown(value="画像をクリックして選択します。", visible=True),
-                gr.Button(visible=False), gr.Group(visible=False), *refresh())
+        return (None, None, "", None, False, [],
+                gr.Markdown(value="", visible=False),
+                gr.Button(visible=False), gr.Group(visible=False),
+                gr.Button(value="選択"), gr.Button(interactive=True), *refresh())
 
     def delete_selected(identifier):
         if not identifier:
@@ -642,8 +762,8 @@ def build_app():
                     )
                     live_preview = gr.Checkbox(
                         label="生成途中をプレビュー",
-                        value=True,
-                        info="生成中に数回、途中の画像を表示します。",
+                        value=False,
+                        info="実験的機能です。生のdenoising途中画像なので、完成直前でもノイズが残ります。",
                     )
                     randomize_seed = gr.Checkbox(label="毎回違うSeedを使う", value=True)
                     with gr.Row(visible=False) as custom_dimensions:
@@ -651,7 +771,9 @@ def build_app():
                         height = gr.Slider(512, 2752, value=1024, step=32, label="高さ")
                     steps = gr.Slider(1, 80, value=40, step=1, label="生成ステップ")
                     seed = gr.Number(label="Seed", value=42, precision=0, minimum=0, maximum=4294967295)
-                create = gr.Button("画像を生成", variant="primary")
+                with gr.Row():
+                    create = gr.Button("画像を生成", variant="primary")
+                    stop_generation = gr.Button("停止", variant="stop", visible=False)
             with gr.Column(scale=8, min_width=480, elem_id="output-panel"):
                 result = gr.Image(label="生成結果", type="filepath", image_mode="RGBA", format="png",
                                   interactive=False, height=720, elem_id="result-panel")
@@ -660,15 +782,16 @@ def build_app():
                     delete = gr.Button("削除", variant="stop")
                 stats = gr.Markdown("待機中", visible=True, elem_id="generation-stats")
                 with gr.Group(visible=False, elem_id="delete-confirmation") as delete_confirmation:
-                    gr.Markdown("**この生成結果を完全に削除します。** 元に戻せません。")
+                    gr.Markdown("**この画像を削除します。** 元に戻せません。")
                     with gr.Row():
                         cancel_delete = gr.Button("キャンセル")
                         confirm_delete = gr.Button("削除する", variant="stop")
         with gr.Row(elem_id="history-toolbar"):
-            batch_mode = gr.Checkbox(label="複数選択して削除", value=False)
+            batch_mode = gr.State(False)
+            batch_toggle = gr.Button("選択", scale=0, min_width=84)
             batch_status = gr.Markdown("", visible=False, elem_id="batch-selection-status")
             batch_delete = gr.Button("選択した画像を削除", variant="stop", visible=False)
-        with gr.Group(visible=False) as batch_delete_confirmation:
+        with gr.Group(visible=False, elem_id="batch-delete-confirmation") as batch_delete_confirmation:
             batch_delete_text = gr.Markdown("")
             with gr.Row():
                 batch_cancel_delete = gr.Button("キャンセル")
@@ -695,16 +818,20 @@ def build_app():
         generation_start = create.click(begin_generation,
                                         outputs=[generation_active, stats, batch_mode,
                                                  batch_selected, batch_status, batch_delete,
-                                                 batch_delete_confirmation, delete],
+                                                 batch_delete_confirmation, delete,
+                                                 batch_toggle, gallery, create, stop_generation],
                                         queue=False, api_name=False)
         generation = generation_start.then(
             run_with_progress,
             inputs=[persona, prompt, refs, size_preset, width, height,
                     steps, seed, randomize_seed, use_enhancer, live_preview],
             outputs=[result, files, stats, *refresh_outputs, selected_identifier,
-                     generation_active],
+                     generation_active, create, stop_generation],
             concurrency_limit=1, show_progress_on=[result], api_name=False,
         )
+        stop_generation.click(request_stop_generation,
+                              outputs=[stats, stop_generation],
+                              queue=False, api_name=False)
         generation.then(hide_delete_confirmation, outputs=delete_confirmation,
                         queue=False, api_name=False)
         api_generate.click(run,
@@ -731,20 +858,22 @@ def build_app():
                              outputs=[refs, result, stats, selected_identifier,
                                       delete_confirmation, *refresh_outputs],
                              queue=False, api_name=False)
-        batch_mode.change(toggle_batch_mode, inputs=batch_mode,
-                          outputs=[batch_selected, gallery, batch_status, batch_delete,
-                                   batch_delete_confirmation, delete],
-                          queue=False, api_name=False)
+        batch_toggle.click(toggle_batch_mode, inputs=batch_mode,
+                           outputs=[batch_mode, batch_selected, gallery, batch_status,
+                                    batch_delete, batch_delete_confirmation, delete,
+                                    batch_toggle],
+                           queue=False, api_name=False)
         batch_delete.click(request_batch_delete, inputs=batch_selected,
-                           outputs=[batch_delete_text, batch_delete_confirmation],
+                           outputs=[batch_delete_text, batch_delete_confirmation,
+                                    batch_confirm_delete],
                            queue=False, api_name=False)
         batch_cancel_delete.click(hide_delete_confirmation,
                                   outputs=batch_delete_confirmation,
                                   queue=False, api_name=False)
         batch_confirm_delete.click(
             delete_batch, inputs=batch_selected,
-            outputs=[refs, result, stats, selected_identifier, batch_selected,
-                     batch_status, batch_delete, batch_delete_confirmation,
+            outputs=[refs, result, stats, selected_identifier, batch_mode, batch_selected,
+                     batch_status, batch_delete, batch_delete_confirmation, batch_toggle, delete,
                      *refresh_outputs],
             queue=False, api_name=False,
         )

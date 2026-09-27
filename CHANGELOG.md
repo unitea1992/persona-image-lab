@@ -23,8 +23,8 @@
   prompt-enhancer runtime files to the local user, and migrate the legacy model
   identity marker to Persona Image Lab naming.
 - Use prompt-enhancer aspect-ratio output for the new automatic canvas mode.
-- Make the Gradio studio full-width, use the built-in Ocean theme, and show
-  intermediate generation previews by default.
+- Make the Gradio studio full-width, use the built-in Ocean theme, and add
+  optional intermediate generation previews.
 - Add confirmed permanent deletion for saved generations and clean up reference
   copies only after their final use.
 - Document tailnet-only Tailscale Serve as the preferred remote-access path while
@@ -38,6 +38,14 @@
 - Keep generation progress visible below the result, prevent history selection
   from racing with an active generation, and add confirmed multi-select history
   deletion.
+- Move history selection into a compact thumbnail-marking mode and make deletion
+  confirmation cards compact. Make noisy denoising previews opt-in and limit them
+  to the final stages when enabled.
+- Constrain vLLM prompt-enhancer replies with a JSON schema and retry malformed
+  output once with a larger token budget. Abort the generation instead of silently
+  falling back to a short raw prompt when both attempts fail.
+- Add an explicit Stop control for active UI generations. Prompt-enhancer streams
+  and denoising are cooperatively cancelled, and cancelled runs are not saved.
 - Make `./persona start` wait for Image / PE-T2I / PE-I2I readiness while
   printing startup progress instead of requiring log monitoring.
 - Pin CI to Ubuntu 24.04 and update checkout/setup-python to their current

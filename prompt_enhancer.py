@@ -28,9 +28,20 @@ class EnhancerProfile:
 
 PROFILES = {
     "t2i": EnhancerProfile("t2i", PE_T2I_ID, PE_T2I_REVISION, PE_T2I_DIR,
-                           False, 1.5, 640, PE_T2I_SOCKET),
+                           False, 1.5, 768, PE_T2I_SOCKET),
     "i2i": EnhancerProfile("i2i", PE_I2I_ID, PE_I2I_REVISION, PE_I2I_DIR,
-                           True, 0.0, 640, PE_I2I_SOCKET),
+                           True, 0.0, 768, PE_I2I_SOCKET),
+}
+
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rewritten_prompt": {"type": "string", "minLength": 1},
+        "wh_ratio": {"type": "string"},
+        "ratio_follow": {"type": "string"},
+    },
+    "required": ["rewritten_prompt", "wh_ratio", "ratio_follow"],
+    "additionalProperties": False,
 }
 
 _CACHE = {}
@@ -39,6 +50,10 @@ _LOCK = threading.Lock()
 
 
 class PromptEnhancerError(RuntimeError):
+    pass
+
+
+class PromptEnhancerCancelled(PromptEnhancerError):
     pass
 
 
@@ -170,12 +185,44 @@ def _tokenizer(profile):
     return tokenizer
 
 
-def _vllm_request(profile, prompt, references, seed):
+def _stream_vllm_response(client, endpoint, payload, task, cancel_event):
+    payload = {**payload, "stream": True}
+    parts = []
+    finish_reason = None
+    with client.stream("POST", endpoint, json=payload) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if cancel_event is not None and cancel_event.is_set():
+                raise PromptEnhancerCancelled("Prompt enhancement was cancelled.")
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            payload = json.loads(data)
+            choice = payload.get("choices", [{}])[0]
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+            if task == "t2i":
+                fragment = choice.get("text", "")
+            else:
+                fragment = (choice.get("delta") or {}).get("content", "")
+            if isinstance(fragment, str) and fragment:
+                parts.append(fragment)
+    if cancel_event is not None and cancel_event.is_set():
+        raise PromptEnhancerCancelled("Prompt enhancement was cancelled.")
+    return "".join(parts), finish_reason
+
+
+def _vllm_request(profile, prompt, references, seed, *, max_tokens=None,
+                  temperature=1.0, structured=True, cancel_event=None):
     import httpx
 
     socket = profile.socket
     if not socket.exists():
         raise PromptEnhancerError(f"Prompt enhancer {profile.task} service is not ready.")
+    if cancel_event is not None and cancel_event.is_set():
+        raise PromptEnhancerCancelled("Prompt enhancement was cancelled.")
     system_prompt = (profile.directory / "system_prompt.txt").read_text(encoding="utf-8").strip()
     transport = httpx.HTTPTransport(uds=str(socket))
     started = time.perf_counter()
@@ -194,16 +241,25 @@ def _vllm_request(profile, prompt, references, seed):
                 payload = {
                     "model": "persona-pe-t2i",
                     "prompt": rendered,
-                    "max_tokens": profile.max_new_tokens,
-                    "temperature": 1.0,
+                    "max_tokens": max_tokens or profile.max_new_tokens,
+                    "temperature": temperature,
                     "top_p": 0.95,
                     "top_k": 20,
                     "presence_penalty": profile.presence_penalty,
                     "seed": seed,
                 }
-                response = client.post("/v1/completions", json=payload)
-                response.raise_for_status()
-                decoded = response.json()["choices"][0]["text"]
+                if structured:
+                    payload["structured_outputs"] = {"json": OUTPUT_SCHEMA}
+                if cancel_event is not None:
+                    decoded, finish_reason = _stream_vllm_response(
+                        client, "/v1/completions", payload, profile.task, cancel_event
+                    )
+                else:
+                    response = client.post("/v1/completions", json=payload)
+                    response.raise_for_status()
+                    choice = response.json()["choices"][0]
+                    decoded = choice["text"]
+                    finish_reason = choice.get("finish_reason")
             else:
                 content = [
                     {"type": "image_url", "image_url": {"url": _image_data_url(path)}}
@@ -216,20 +272,31 @@ def _vllm_request(profile, prompt, references, seed):
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": content},
                     ],
-                    "max_tokens": profile.max_new_tokens,
-                    "temperature": 1.0,
+                    "max_tokens": max_tokens or profile.max_new_tokens,
+                    "temperature": temperature,
                     "top_p": 0.95,
                     "top_k": 20,
                     "presence_penalty": profile.presence_penalty,
                     "seed": seed,
                     "chat_template_kwargs": {"enable_thinking": False},
                 }
-                response = client.post("/v1/chat/completions", json=payload)
-                response.raise_for_status()
-                decoded = response.json()["choices"][0]["message"]["content"]
+                if structured:
+                    payload["structured_outputs"] = {"json": OUTPUT_SCHEMA}
+                if cancel_event is not None:
+                    decoded, finish_reason = _stream_vllm_response(
+                        client, "/v1/chat/completions", payload, profile.task, cancel_event
+                    )
+                else:
+                    response = client.post("/v1/chat/completions", json=payload)
+                    response.raise_for_status()
+                    choice = response.json()["choices"][0]
+                    decoded = choice["message"]["content"]
+                    finish_reason = choice.get("finish_reason")
+    except PromptEnhancerCancelled:
+        raise
     except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
         raise PromptEnhancerError(f"Prompt enhancer {profile.task} service failed: {error}") from error
-    return decoded, time.perf_counter() - started
+    return decoded, time.perf_counter() - started, finish_reason
 
 
 def _transformers_request(profile, prompt, references, seed):
@@ -266,10 +333,10 @@ def _transformers_request(profile, prompt, references, seed):
         pad_token_id=processor.tokenizer.eos_token_id,
     )
     decoded = processor.tokenizer.decode(output[0, prompt_length:], skip_special_tokens=True)
-    return decoded, time.perf_counter() - started
+    return decoded, time.perf_counter() - started, None
 
 
-def enhance_prompt(prompt, references=None, seed=42):
+def enhance_prompt(prompt, references=None, seed=42, cancel_event=None):
     references = references or []
     task = choose_task(references)
     profile = PROFILES[task]
@@ -283,17 +350,38 @@ def enhance_prompt(prompt, references=None, seed=42):
         raise PromptEnhancerError(f"Unsupported prompt enhancer backend: {backend}")
     with _LOCK:
         if backend == "vllm" or (backend == "auto" and profile.socket.exists()):
-            decoded, elapsed = _vllm_request(profile, prompt, references, seed)
+            decoded, elapsed, finish_reason = _vllm_request(
+                profile, prompt, references, seed, cancel_event=cancel_event
+            )
             used_backend = "vllm"
         else:
+            if cancel_event is not None and cancel_event.is_set():
+                raise PromptEnhancerCancelled("Prompt enhancement was cancelled.")
             import torch
             with torch.inference_mode():
-                decoded, elapsed = _transformers_request(profile, prompt, references, seed)
+                decoded, elapsed, finish_reason = _transformers_request(
+                    profile, prompt, references, seed
+                )
+            if cancel_event is not None and cancel_event.is_set():
+                raise PromptEnhancerCancelled("Prompt enhancement was cancelled.")
             used_backend = "transformers"
     _, answer = _split_thinking(decoded)
     parsed = parse_answer(answer, task)
+    retry_elapsed = 0.0
+    retry_finish_reason = None
+    if (not parsed["parse_ok"] or finish_reason == "length") and used_backend == "vllm":
+        decoded, retry_elapsed, retry_finish_reason = _vllm_request(
+            profile, prompt, references, seed,
+            max_tokens=1536, temperature=0.2, structured=True,
+            cancel_event=cancel_event,
+        )
+        _, answer = _split_thinking(decoded)
+        parsed = parse_answer(answer, task)
     if not parsed["parse_ok"]:
-        raise PromptEnhancerError("Prompt enhancer output could not be parsed.")
+        reason = retry_finish_reason or finish_reason or "unknown"
+        raise PromptEnhancerError(
+            f"Prompt enhancer output could not be parsed after retry (finish_reason={reason})."
+        )
     return {
         **parsed,
         "task": task,
@@ -301,5 +389,7 @@ def enhance_prompt(prompt, references=None, seed=42):
         "revision": profile.revision,
         "seed": seed,
         "backend": used_backend,
-        "elapsed_seconds": round(elapsed, 2),
+        "elapsed_seconds": round(elapsed + retry_elapsed, 2),
+        "retried": bool(retry_elapsed),
+        "finish_reason": retry_finish_reason or finish_reason,
     }

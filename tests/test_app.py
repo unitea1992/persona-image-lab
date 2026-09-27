@@ -34,7 +34,7 @@ class AppTests(unittest.TestCase):
 
     def fake_generate(self, prompt, refs, width, height, steps, seed, context=None,
                       user_prompt=None, progress_callback=None, preview_callback=None,
-                      enhancer=None):
+                      enhancer=None, cancel_event=None):
         from PIL import Image
         from history import save_generation
 
@@ -47,6 +47,25 @@ class AppTests(unittest.TestCase):
         if enhancer:
             metadata["prompt_enhancer"] = enhancer
         return save_generation(self.root, Image.new("RGBA", (width, height), "red"), metadata, refs or [])
+
+    def test_stop_request_marks_active_generation_for_cancellation(self):
+        event = self.lab._new_generation_cancel_event()
+        self.addCleanup(self.lab._clear_generation_cancel_event, event)
+        self.assertFalse(event.is_set())
+        self.assertTrue(self.lab._request_generation_cancel())
+        self.assertTrue(event.is_set())
+
+    def test_progress_generator_reports_cancelled_without_saving(self):
+        event = self.lab._new_generation_cancel_event()
+        event.set()
+        responses = list(self.functions["run_with_progress"][1](
+            "", "Cancelled generation", None, "カスタム", 512, 512, 4, 1,
+            False, False, False,
+        ))
+        self.assertEqual(len(responses), 1)
+        self.assertIn("停止しました", responses[0][2])
+        self.assertFalse(responses[0][7])
+        self.assertEqual(self.lab.load_history(self.root), [])
 
     def test_generation_updates_table_gallery_and_selection_snapshot(self):
         with patch.object(self.lab, "generate", self.fake_generate):
@@ -78,6 +97,21 @@ class AppTests(unittest.TestCase):
         with patch.object(self.lab, "generate", side_effect=ValueError("Enter a prompt.")):
             with self.assertRaises(gr.Error):
                 self.functions["run"][1]("", "", None, "カスタム", 512, 512, 4, 0, False)
+        self.assertEqual(self.lab.load_history(self.root), [])
+
+    def test_prompt_enhancer_failure_aborts_before_image_generation(self):
+        import gradio as gr
+        from prompt_enhancer import PromptEnhancerError
+
+        with (patch.object(self.lab, "PROMPT_ENHANCER_ENABLED", True),
+              patch.object(self.lab, "enhance_prompt",
+                           side_effect=PromptEnhancerError("bad structured output")),
+              patch.object(self.lab, "generate") as generate):
+            with self.assertRaises(gr.Error):
+                self.functions["run"][1](
+                    "", "Short scene", None, "カスタム", 512, 512, 4, 0, False
+                )
+        generate.assert_not_called()
         self.assertEqual(self.lab.load_history(self.root), [])
 
     def test_reference_edit_is_retained_and_restored(self):
@@ -187,8 +221,13 @@ class AppTests(unittest.TestCase):
         selected = second[13]
         self.assertEqual(set(selected), set(identifiers))
 
+        confirmation = self.functions["request_batch_delete"][1](selected)
+        self.assertTrue(confirmation[1].visible)
+        self.assertEqual(confirmation[2].value, "2件を削除")
+
         deleted = self.functions["delete_batch"][1](selected)
-        self.assertEqual(deleted[4], [])
+        self.assertFalse(deleted[4])
+        self.assertEqual(deleted[5], [])
         self.assertEqual(self.lab.load_history(self.root), [])
 
     def test_gallery_selection_is_ignored_while_generation_is_active(self):
