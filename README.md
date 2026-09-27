@@ -92,16 +92,15 @@ The two prompt-enhancer checkpoints are separate Qwen3.5-VL 9B models. When host
 vLLM is available, `./persona start` loads both as FP8 services and exposes them
 only through Unix-domain sockets under `cache/prompt-enhancer/`. `./persona stop`
 terminates them together with the image-generation service. Prompt enhancement
-is enabled by default. Intermediate image previews are opt-in from Advanced
-settings because raw denoising frames remain visibly noisy.
+is enabled by default.
 
-Generation progress is also shown persistently below the result instead of only
-in Gradio's transient progress overlay. History selection is ignored while a
-generation is active so a live preview cannot overwrite a history view. The
-recent gallery has a compact selection mode that puts checkbox-style markers on
-the thumbnails for confirmed batch deletion. Intermediate image previews are
-disabled by default because raw denoising frames remain visibly noisy; users can
-opt in from Advanced settings, where previews are limited to the final denoising stages.
+Generation progress is shown persistently below the result without using
+Gradio's transient progress overlay. The result image itself changes only when
+generation completes, avoiding repeated redraws while denoising. When prompt
+enhancement is used, the original input stays untouched and the expanded prompt
+is shown read-only beside the result. History selection is ignored while a
+generation is active. The recent gallery has a compact selection mode that puts
+checkbox-style markers on the thumbnails for confirmed batch deletion.
 
 An active UI generation can be stopped. Prompt-enhancer streaming is closed when
 stopped during prompt expansion, and denoising is interrupted at the next step

@@ -33,7 +33,7 @@ class AppTests(unittest.TestCase):
         self.functions = {fn.name: (index, fn.fn) for index, fn in self.app.fns.items()}
 
     def fake_generate(self, prompt, refs, width, height, steps, seed, context=None,
-                      user_prompt=None, progress_callback=None, preview_callback=None,
+                      user_prompt=None, progress_callback=None,
                       enhancer=None, cancel_event=None):
         from PIL import Image
         from history import save_generation
@@ -60,11 +60,11 @@ class AppTests(unittest.TestCase):
         event.set()
         responses = list(self.functions["run_with_progress"][1](
             "", "Cancelled generation", None, "カスタム", 512, 512, 4, 1,
-            False, False, False,
+            False, False,
         ))
         self.assertEqual(len(responses), 1)
-        self.assertIn("停止しました", responses[0][2])
-        self.assertFalse(responses[0][7])
+        self.assertIn("停止しました", responses[0][0])
+        self.assertFalse(responses[0][6])
         self.assertEqual(self.lab.load_history(self.root), [])
 
     def test_generation_updates_table_gallery_and_selection_snapshot(self):
@@ -113,6 +113,31 @@ class AppTests(unittest.TestCase):
                 )
         generate.assert_not_called()
         self.assertEqual(self.lab.load_history(self.root), [])
+
+    def test_enhanced_prompt_is_shown_without_overwriting_user_prompt(self):
+        enhanced = {
+            "rewritten_prompt": "Expanded scene with detailed lighting.",
+            "wh_ratio": "1:1",
+        }
+        with (patch.object(self.lab, "PROMPT_ENHANCER_ENABLED", True),
+              patch.object(self.lab, "enhance_prompt", return_value=enhanced),
+              patch.object(self.lab, "generate", self.fake_generate)):
+            responses = list(self.functions["run_with_progress"][1](
+                "", "Short scene", None, "カスタム", 512, 512, 4, 7,
+                False, True,
+            ))
+
+        final = responses[-1]
+        self.assertEqual(final[1].value, enhanced["rewritten_prompt"])
+        self.assertTrue(final[1].visible)
+        presented = self.functions["present_generation"][1](final[9])
+        self.assertTrue(Path(presented[0]).is_file())
+        self.assertEqual(len(presented[1]), 2)
+        entries = self.lab.load_history(self.root)
+        restored = self.functions["restore"][1](0, [entries[0]["id"]])
+        self.assertEqual(restored[1], "Short scene")
+        self.assertEqual(restored[12].value, enhanced["rewritten_prompt"])
+        self.assertTrue(restored[12].visible)
 
     def test_reference_edit_is_retained_and_restored(self):
         from PIL import Image
@@ -197,7 +222,9 @@ class AppTests(unittest.TestCase):
         self.assertTrue(confirmation.visible)
         deleted = self.functions["delete_selected"][1](identifier)
 
-        self.assertEqual(deleted[:4], (None, None, "", None))
+        self.assertEqual(deleted[:3], (None, None, ""))
+        self.assertFalse(deleted[3].visible)
+        self.assertIsNone(deleted[4])
         self.assertEqual(deleted[-2:], ([], []))
         self.assertEqual(self.lab.load_history(self.root), [])
 
@@ -213,12 +240,12 @@ class AppTests(unittest.TestCase):
         first = self.functions["select_image"][1](
             identifiers, False, True, [], SimpleNamespace(index=0)
         )
-        selected = first[13]
+        selected = first[14]
         self.assertEqual(selected, [identifiers[0]])
         second = self.functions["select_image"][1](
             identifiers, False, True, selected, SimpleNamespace(index=1)
         )
-        selected = second[13]
+        selected = second[14]
         self.assertEqual(set(selected), set(identifiers))
 
         confirmation = self.functions["request_batch_delete"][1](selected)
@@ -226,15 +253,16 @@ class AppTests(unittest.TestCase):
         self.assertEqual(confirmation[2].value, "2件を削除")
 
         deleted = self.functions["delete_batch"][1](selected)
-        self.assertFalse(deleted[4])
-        self.assertEqual(deleted[5], [])
+        self.assertFalse(deleted[3].visible)
+        self.assertFalse(deleted[5])
+        self.assertEqual(deleted[6], [])
         self.assertEqual(self.lab.load_history(self.root), [])
 
     def test_gallery_selection_is_ignored_while_generation_is_active(self):
         response = self.functions["select_image"][1](
             ["missing-but-must-not-be-restored"], True, False, [], SimpleNamespace(index=0)
         )
-        self.assertEqual(response[13], [])
+        self.assertEqual(response[14], [])
 
     def test_delete_is_private_and_generate_api_contract_is_unchanged(self):
         endpoints = self.app.get_api_info()["named_endpoints"]

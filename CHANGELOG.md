@@ -50,6 +50,10 @@
   printing startup progress instead of requiring log monitoring.
 - Pin CI to Ubuntu 24.04 and update checkout/setup-python to their current
   Node 24-based major versions before the runner migrations become mandatory.
+- Stop redrawing the result area for Gradio progress updates and remove noisy
+  intermediate denoising previews. The result image now changes only on completion.
+- Show the prompt-enhancer rewrite separately without replacing the user's input,
+  and restore that expanded prompt when opening generation history.
 
 ## 0.1.0-alpha.2 - 2026-09-20
 
