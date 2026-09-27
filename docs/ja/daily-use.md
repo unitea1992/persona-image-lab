@@ -10,12 +10,21 @@
 ./persona start
 ```
 
-`start` は先にモデルの状態を確認してからコンテナを起動します。モデルの読み込み中はブラウザへまだ接続できません。GB10実機では、Qwen-Image-2.1の読み込みにおおむね3〜4分かかります。
+`start` は先にモデルの状態を確認し、画像モデルとPrompt Enhancerを起動します。host側でvLLMが利用できる場合は、PE-T2I / PE-I2IをFP8で並列ロードします。Labとの通信は `cache/prompt-enhancer/*.sock` のUnix socketだけです。
+
+GB10ではモデルの初回ロードに数分かかります。Prompt Enhancerは初回のみFlashInfer等のJIT準備が入る場合があります。短文補完を確実に使うなら、`./persona status` で両方が `ready` になってから生成します。
 
 状態だけ確認したい場合は次を使います。
 
 ```bash
 ./persona status
+```
+
+Docker側に加えて、次のような状態が表示されます。
+
+```text
+t2i: ready (pid ...)
+i2i: ready (pid ...)
 ```
 
 ログを追う場合は次です。
@@ -26,19 +35,23 @@
 
 `Model loaded` とローカルURLが表示されれば利用できます。
 
-## 2. プロンプトは日本語の自然文で入力する
+## 2. 短い日本語の指示から始める
 
-Qwen-Image-2.1へは、日本語で場面や服装をそのまま指定できます。Stable Diffusion系でよく使われる単語の羅列へ変換する必要はありません。
+入力は日本語の自然文で構いません。標準ではPrompt Enhancerが短い指示を画像生成向けの具体的なPromptへ展開します。参照画像なしではPE-T2I、Personaや追加参照がある場合はPE-I2Iを自動で使います。
 
-たとえばキャラクターを選び、次のように入力します。
+たとえばPersonaを1つ選んで、次の程度から始められます。
 
 ```text
-公園で立っている。白いワンピース、やわらかい夕方の光、全身。
+ゲームに熱中するキャラクターA
 ```
 
-Personaを選んだ場合、本人性や参照画像の役割は内部で補います。`visual-canon.md` のような長い設定文を生成Promptへ直接連結しないため、ユーザーは今回の画像で変えたい内容だけを書けば足ります。
+Personaを選んだ場合、本人性や参照画像の役割は内部で補います。`visual-canon.md` のような長い設定文を生成Promptへ直接連結しません。必要なら詳細設定から「短い指示を自動で具体化」をOFFにし、入力文をそのままQwen-Image-2.1へ渡せます。
 
-生成中はQwen-Image-2.1のstep進捗が表示されます。途中latentを画像へ戻して逐次表示するには追加のVAEデコードが必要になるため、生成速度とGPUメモリへの影響を避けて現状は使いません。
+GB10上のFP8 vLLM実測では、PE-T2Iは約30秒、Persona参照画像2枚を使ったPE-I2Iは約43秒でした。出力するPromptの長さで前後します。画像生成そのものに入る前にこの時間が追加され、短い指示から構図・照明・アスペクト比まで補います。
+
+画像サイズは標準で「自動（Promptから判断）」です。Prompt Enhancerが返すアスペクト比を使い、約1MPを基準に32px単位へ丸めます。自分で固定したい場合は正方形・縦長・横長のプリセットかカスタムを選びます。
+
+生成中はstep進捗と途中画像が表示されます。途中プレビューは標準ONで、40 stepならおおむね1/3と2/3の2回更新します。高解像度ではプレビューだけ512px級へ縮小してVAE decodeするため、完成画像の解像度は変えずに負荷を抑えます。不要なら詳細設定からOFFにできます。
 
 ## 3. PCからTailscale経由で開く
 
@@ -62,7 +75,7 @@ Tailscale Serveは `127.0.0.1:7862` のPersona Image Labへ中継します。Doc
 ./persona stop
 ```
 
-Persona Image Labは画像生成時だけ起動する運用を前提にしています。停止すればモデルを保持していたプロセスも終了するため、ローカルLLMなど別の用途へメモリを戻せます。
+Persona Image Labは画像生成時だけ起動する運用を前提にしています。停止するとDockerの画像モデルだけでなく、host側のPE-T2I / PE-I2Iプロセスも終了するため、ローカルLLMなど別の用途へメモリを戻せます。
 
 Tailscale Serveは停止しなくて構いません。Persona Image Labが止まっている間は同じURLへアクセスしてもバックエンドへ接続できませんが、次回 `./persona start` した後はURLを変えずに再利用できます。
 
@@ -75,5 +88,6 @@ Tailscale Serveは停止しなくて構いません。Persona Image Labが止ま
 | 状態を見る | `./persona status` |
 | ログを見る | `./persona logs` |
 | 環境を診断する | `./persona doctor` |
+| Prompt Enhancerを取得する | `./persona download-enhancers --accept-model-license` |
 
 現状は `./persona` をリポジトリ内から実行します。どこからでも短いコマンドで起動できる仕組みは、必要性が固まってから追加する方針です。

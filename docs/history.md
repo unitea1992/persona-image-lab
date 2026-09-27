@@ -1,22 +1,21 @@
 # Generation History
 
-The area previously occupied by fixed demo prompts now lists completed local
-generations, newest first. Columns: prompt, original reference filenames, width,
-height, steps, seed, and generation time in seconds. The image gallery below
-uses the same order. Rows are paginated by Gradio in groups of ten.
+Completed local generations are shown newest first in the recent-generation
+gallery. A hidden dataset keeps prompt/reference/size/step/seed/runtime values
+for restore logic without taking space in the everyday interface.
 
 Every successful generation refreshes both views in the submitting browser.
 Reloading the page reads history from disk, including after a server restart.
 Other browser sessions refresh when reloaded or after their next generation;
 this release does not push live history updates between sessions.
 
-Select a table row or gallery image to restore its effective prompt, references,
-dimensions, steps, seed, result preview, runtime, and download files. Selection
-does not generate an image. "Use result as extra reference" makes the selected
-result the manual reference input for a subsequent edit.
+Select a gallery image to restore its original user prompt, references,
+dimensions, steps, seed, and result preview. Selection does not generate an
+image. "Use result as extra reference" makes the selected result the manual
+reference input for a subsequent edit.
 
-To remove a generation, select it, enable "Confirm permanent deletion," and
-choose "Delete permanently." The app removes the generation PNG and JSON record.
+To remove a generation, select it, choose Delete, then confirm Delete in the
+second-step confirmation UI. The app removes the generation PNG and JSON record.
 Saved reference copies are removed only when no remaining generation uses them.
 Deletion cannot be undone.
 
@@ -37,6 +36,8 @@ Version 1 records contain:
 - The original `user_prompt` when generated through the UI, so restoring a
   generation puts only the user's text back into the prompt field instead of
   exposing internal persona instructions.
+- Prompt-enhancer metadata when used, including PE-T2I/PE-I2I model identity,
+  pinned revision, rewritten prompt, enhancer seed, and enhancer runtime.
 - Optional local persona identifier/name context when a persona preset was used.
 - `elapsed_seconds`, `peak_allocated_gib`, image mode, and alpha extrema.
 - Reference filename, content hash, and relative persistent path.

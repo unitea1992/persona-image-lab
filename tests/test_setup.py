@@ -3,13 +3,25 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from manage import download, installed_model_revision, missing_model_files
-from settings import MODEL_REVISION, ROOT, prepare_output_directory
+from manage import (LEGACY_MODEL_MARKER, MODEL_MARKER, download,
+                    download_enhancers, installed_model_revision,
+                    migrate_legacy_model_marker, missing_model_files,
+                    pe_model_install_error)
+from settings import MODEL_ID, MODEL_REVISION, PE_T2I_ID, PE_T2I_REVISION, ROOT, prepare_output_directory
 
 
 class SetupTests(unittest.TestCase):
     def test_download_requires_explicit_license_acceptance(self):
         self.assertEqual(download(False), 2)
+
+    def test_prompt_enhancer_download_requires_explicit_license_acceptance(self):
+        self.assertEqual(download_enhancers(False), 2)
+
+    def test_prompt_enhancer_requires_files_and_identity_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            error = pe_model_install_error(root, PE_T2I_ID, PE_T2I_REVISION)
+            self.assertIn("Incomplete", error)
 
     def test_missing_model_detected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -40,6 +52,16 @@ class SetupTests(unittest.TestCase):
             metadata.parent.mkdir(parents=True)
             metadata.write_text(MODEL_REVISION + "\netag\ntimestamp\n")
             self.assertEqual(installed_model_revision(Path(directory)), MODEL_REVISION)
+
+    def test_legacy_runtime_marker_is_migrated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / LEGACY_MODEL_MARKER
+            legacy.write_text(json.dumps({"model": MODEL_ID, "revision": MODEL_REVISION}))
+            self.assertTrue(migrate_legacy_model_marker(root))
+            self.assertFalse(legacy.exists())
+            self.assertTrue((root / MODEL_MARKER).is_file())
+            self.assertEqual(installed_model_revision(root), MODEL_REVISION)
 
     def test_custom_output_directory_must_be_dedicated(self):
         with tempfile.TemporaryDirectory() as directory:

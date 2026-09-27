@@ -3,9 +3,12 @@ import importlib.metadata
 import json
 import logging
 import os
+import queue
 import secrets
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 from PIL import Image, ImageOps
 
@@ -19,28 +22,41 @@ from history import (delete_generation, load_history, restore_generation,
                      save_generation, validate_request)
 from manage import model_install_error
 from persona_profiles import compose_prompt, get_persona, load_personas
+from prompt_enhancer import PromptEnhancerError, enhance_prompt
 from settings import (APP_VERSION, MODEL_DIR, MODEL_ID, MODEL_REVISION, OUTPUTS,
-                      ROOT, prepare_output_directory)
+                      PROMPT_ENHANCER_ENABLED, ROOT, prepare_output_directory)
 
 DEMOS = json.loads((ROOT / "demos.json").read_text())
 LOCK = threading.Lock()
 HISTORY_LOCK = threading.Lock()
 PIPE = None
 APP_CSS = """
-.gradio-container { max-width: 1480px !important; }
-#studio-header { padding: 0.25rem 0 1rem; }
+.gradio-container {
+  max-width: none !important;
+  width: 100% !important;
+  padding: 1rem clamp(0.75rem, 2vw, 2rem) 1.5rem !important;
+}
+#studio-header { padding: 0.15rem 0 0.8rem; }
 #studio-header h1 { margin: 0 0 0.25rem; letter-spacing: -0.03em; }
 #studio-header p { margin: 0; opacity: 0.7; }
+#studio-shell { align-items: stretch; gap: clamp(0.8rem, 1.5vw, 1.4rem); }
+#control-panel, #output-panel { min-width: 0; }
 #persona-status { min-height: 2.4rem; opacity: 0.82; }
-#result-panel img { object-fit: contain !important; }
+#result-panel { min-height: 68vh; }
+#result-panel img { object-fit: contain !important; max-height: 76vh !important; }
 #generation-stats { min-height: 1.5rem; opacity: 0.72; }
 #delete-confirmation { border-left: 3px solid var(--color-accent); padding-left: 0.8rem; }
 #recent-generations { margin-top: 0.75rem; }
 #result-panel button[aria-label="Share"],
-#recent-generations button[aria-label="Share"] { display: none !important; }
-#recent-generations button[aria-label="Download All"] { display: none !important; }
+#result-panel button[aria-label="共有"],
+#recent-generations button[aria-label="Share"],
+#recent-generations button[aria-label="共有"] { display: none !important; }
+#recent-generations button[aria-label="Download All"],
+#recent-generations button[aria-label="すべてダウンロード"] { display: none !important; }
 @media (max-width: 640px) {
+  .gradio-container { padding: 0.65rem !important; }
   #studio-header { padding-bottom: 0.5rem; }
+  #result-panel { min-height: 48vh; }
 }
 """
 
@@ -66,8 +82,57 @@ def pipeline():
     return PIPE
 
 
+def _decode_preview(pipe, packed_latents, width, height):
+    import torch
+    import torch.nn.functional as F
+
+    latents = pipe._unpack_latents(
+        packed_latents.detach(), height, width, pipe.vae_scale_factor
+    ).to(pipe.vae.dtype)
+    if max(width, height) > 512:
+        scale = 512 / max(width, height)
+        target_height = max(1, round(latents.shape[-2] * scale))
+        target_width = max(1, round(latents.shape[-1] * scale))
+        latents = F.interpolate(
+            latents,
+            size=(latents.shape[-3], target_height, target_width),
+            mode="trilinear",
+            align_corners=False,
+        )
+    latents_mean = (
+        torch.tensor(pipe.vae.config.latents_mean)
+        .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+        .to(latents.device, latents.dtype)
+    )
+    latents_std = (
+        torch.tensor(pipe.vae.config.latents_std)
+        .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+        .to(latents.device, latents.dtype)
+    )
+    decoded = pipe.vae.decode(latents * latents_std + latents_mean,
+                              return_dict=False)[0][:, :, 0]
+    return pipe.image_processor.postprocess(decoded, output_type="pil")[0]
+
+
+def validate_manual_references(references):
+    gradio_temp = Path(
+        os.environ.get("GRADIO_TEMP_DIR", Path(tempfile.gettempdir()) / "gradio")
+    ).resolve()
+    allowed_roots = (Path(OUTPUTS).resolve(), gradio_temp)
+    validated = []
+    for reference in references or []:
+        path = Path(reference)
+        resolved = path.resolve()
+        if (path.is_symlink() or not path.is_file()
+                or not any(resolved.is_relative_to(root) for root in allowed_roots)):
+            raise ValueError("参照画像はアップロード済み画像か保存済み生成結果から選んでください。")
+        validated.append(str(resolved))
+    return validated
+
+
 def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42,
-             context=None, user_prompt=None, progress_callback=None):
+             context=None, user_prompt=None, progress_callback=None,
+             preview_callback=None, enhancer=None):
     import torch
 
     prepare_output_directory()
@@ -84,9 +149,19 @@ def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         started = time.perf_counter()
+        preview_steps = {
+            max(1, round(steps / 3)),
+            max(1, round(steps * 2 / 3)),
+        }
         def on_step_end(_pipe, step_index, _timestep, callback_kwargs):
+            step = step_index + 1
             if progress_callback is not None:
-                progress_callback(step_index + 1, steps)
+                progress_callback(step, steps)
+            if (preview_callback is not None and step < steps
+                    and step in preview_steps and "latents" in callback_kwargs):
+                preview_callback(step, steps, _decode_preview(
+                    _pipe, callback_kwargs["latents"], width, height
+                ))
             return callback_kwargs
 
         try:
@@ -94,7 +169,9 @@ def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42
                 prompt=prompt, image=images or None, width=width, height=height,
                 num_inference_steps=steps, true_cfg_scale=1.0, use_kv_cache=True,
                 generator=torch.Generator("cuda").manual_seed(seed),
-                callback_on_step_end=on_step_end if progress_callback is not None else None,
+                callback_on_step_end=(on_step_end
+                                      if progress_callback is not None or preview_callback is not None
+                                      else None),
             ).images[0]
             torch.cuda.synchronize()
         except Exception:
@@ -116,6 +193,10 @@ def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42
     }
     if isinstance(user_prompt, str) and user_prompt.strip():
         metadata["user_prompt"] = user_prompt.strip()
+    if enhancer:
+        metadata["prompt_enhancer"] = enhancer
+        if enhancer.get("rewritten_prompt"):
+            metadata["rewritten_prompt"] = enhancer["rewritten_prompt"]
     if context:
         metadata["context"] = context
     with HISTORY_LOCK:
@@ -141,6 +222,7 @@ def build_app():
     import gradio as gr
 
     size_presets = {
+        "自動（Promptから判断）": "auto",
         "正方形 · 1024 × 1024": (1024, 1024),
         "縦長 · 832 × 1216": (832, 1216),
         "横長 · 1216 × 832": (1216, 832),
@@ -167,11 +249,44 @@ def build_app():
         return entry["prompt"]
 
     def canvas_for(entry):
+        context = entry.get("context")
+        if isinstance(context, dict) and context.get("size_preset") == "自動（Promptから判断）":
+            return "自動（Promptから判断）"
         dimensions = (entry["width"], entry["height"])
         for label, candidate in size_presets.items():
-            if candidate == dimensions:
+            if isinstance(candidate, tuple) and candidate == dimensions:
                 return label
         return "カスタム"
+
+    def dimensions_from_ratio(ratio):
+        try:
+            left, right = ratio.split(":", 1)
+            value = float(left) / float(right)
+        except (AttributeError, ValueError, ZeroDivisionError):
+            return None
+        if not 0.2 <= value <= 5:
+            return None
+        area = 1024 * 1024
+        width = int((area * value) ** 0.5)
+        height = int((area / value) ** 0.5)
+        width = min(2752, max(512, round(width / 32) * 32))
+        height = min(2752, max(512, round(height / 32) * 32))
+        return width, height
+
+    def enhancer_dimensions(enhanced, references):
+        ratio = enhanced.get("wh_ratio", "")
+        if ratio:
+            return dimensions_from_ratio(ratio)
+        follow = enhanced.get("ratio_follow", "")
+        if follow.startswith("<image") and follow.endswith(">"):
+            try:
+                index = int(follow[6:-1]) - 1
+                with Image.open(references[index]) as source:
+                    ratio = f"{source.width}:{source.height}"
+                return dimensions_from_ratio(ratio)
+            except (IndexError, ValueError, OSError):
+                return None
+        return None
 
     def stats_text(stats):
         context = stats.get("context")
@@ -198,44 +313,130 @@ def build_app():
         description = profile.description or "ローカルPersona"
         return f"**{profile.name}** — {description}（参照画像 {len(profile.references)}枚）"
 
-    def run_with_progress(persona_id, prompt, refs, size_preset, width, height, steps, seed,
-                          randomize_seed, progress=gr.Progress()):
-        try:
-            if not isinstance(prompt, str) or not prompt.strip():
-                raise ValueError("プロンプトを入力してください。")
-            profile = get_persona(persona_id)
-            if size_preset not in size_presets:
-                raise ValueError("利用できる画像サイズを選んでください。")
-            dimensions = size_presets[size_preset]
-            if dimensions is not None:
-                width, height = dimensions
-            if randomize_seed:
-                seed = secrets.randbelow(2**32)
-            persona_refs = [str(path) for path in profile.references] if profile else []
-            references = persona_refs + (refs or [])
-            if len(references) > 10:
-                raise ValueError("Personaと追加の参照画像は、合計10枚までです。")
-            effective_prompt = compose_prompt(profile, prompt)
-            context = ({
+    def execute_generation(persona_id, prompt, refs, size_preset, width, height, steps, seed,
+                           randomize_seed, use_enhancer=True, live_preview=False,
+                           status_callback=None, progress_callback=None, preview_callback=None,
+                           warning_callback=None):
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("プロンプトを入力してください。")
+        profile = get_persona(persona_id)
+        if size_preset not in size_presets:
+            raise ValueError("利用できる画像サイズを選んでください。")
+        dimensions = size_presets[size_preset]
+        if isinstance(dimensions, tuple):
+            width, height = dimensions
+        elif dimensions == "auto":
+            width, height = 1024, 1024
+        if randomize_seed:
+            seed = secrets.randbelow(2**32)
+        persona_refs = [str(path) for path in profile.references] if profile else []
+        references = persona_refs + validate_manual_references(refs)
+        if len(references) > 10:
+            raise ValueError("Personaと追加の参照画像は、合計10枚までです。")
+        base_prompt = compose_prompt(profile, prompt)
+        context = {"size_preset": size_preset}
+        if profile:
+            context.update({
                 "persona_id": profile.identifier,
                 "persona_name": profile.name,
                 "persona_reference_count": len(persona_refs),
-            } if profile else None)
-            progress_started = time.perf_counter()
-            progress(0, desc="生成を準備中…")
+            })
 
-            def report_progress(step, total):
-                elapsed = time.perf_counter() - progress_started
+        effective_prompt = base_prompt
+        enhancer_metadata = {"enabled": False}
+        if use_enhancer and PROMPT_ENHANCER_ENABLED:
+            if status_callback:
+                status_callback("短い指示を具体化しています…")
+            try:
+                enhanced = enhance_prompt(base_prompt, references, seed=42)
+                effective_prompt = enhanced["rewritten_prompt"]
+                enhancer_metadata = {"enabled": True, **enhanced}
+                if dimensions == "auto":
+                    suggested = enhancer_dimensions(enhanced, references)
+                    if suggested is not None:
+                        width, height = suggested
+            except PromptEnhancerError as error:
+                logging.warning("Prompt enhancer fallback: %s", error)
+                enhancer_metadata = {"enabled": True, "fallback": True, "error": str(error)}
+                if warning_callback:
+                    warning_callback("Prompt自動補完に失敗したため、入力した指示をそのまま使います。")
+
+        if status_callback:
+            status_callback("画像生成を準備中…")
+        return generate(
+            effective_prompt, references, width, height, steps, seed,
+            context=context, user_prompt=prompt, progress_callback=progress_callback,
+            preview_callback=preview_callback if live_preview else None,
+            enhancer=enhancer_metadata,
+        )
+
+    def run_with_progress(persona_id, prompt, refs, size_preset, width, height, steps, seed,
+                          randomize_seed, use_enhancer, live_preview,
+                          progress=gr.Progress()):
+        events = queue.Queue()
+
+        def worker():
+            try:
+                result = execute_generation(
+                    persona_id, prompt, refs, size_preset, width, height, steps, seed,
+                    randomize_seed, use_enhancer=use_enhancer, live_preview=live_preview,
+                    status_callback=lambda message: events.put(("status", message)),
+                    progress_callback=lambda step, total: events.put(("progress", step, total)),
+                    preview_callback=lambda step, total, image: events.put(("preview", step, total, image)),
+                    warning_callback=lambda message: events.put(("warning", message)),
+                )
+                events.put(("final", result))
+            except BaseException as error:
+                events.put(("error", error))
+
+        threading.Thread(target=worker, daemon=True).start()
+        generation_started = None
+        while True:
+            event = events.get()
+            kind = event[0]
+            if kind == "status":
+                if event[1] == "画像生成を準備中…":
+                    generation_started = time.perf_counter()
+                progress(0, desc=event[1])
+                continue
+            if kind == "progress":
+                _, step, total = event
+                started = generation_started or time.perf_counter()
+                elapsed = time.perf_counter() - started
                 if step < 2:
                     description = f"生成中 {step}/{total}"
                 else:
                     remaining = (elapsed / step) * (total - step)
                     description = f"生成中 {step}/{total} ・ 残り約{remaining:.0f}秒"
                 progress((step, total), desc=description)
+                continue
+            if kind == "preview":
+                _, step, total, image = event
+                progress((step, total), desc=f"生成中 {step}/{total} ・ プレビュー更新")
+                yield image, gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+                continue
+            if kind == "warning":
+                gr.Warning(event[1])
+                continue
+            if kind == "error":
+                error = event[1]
+                if isinstance(error, ValueError):
+                    raise gr.Error(str(error)) from error
+                if isinstance(error, TorchOutOfMemoryError):
+                    raise gr.Error("GPUメモリが不足しました。画像サイズか参照画像の枚数を減らしてください。") from error
+                if isinstance(error, (OSError, Image.DecompressionBombError)):
+                    logging.exception("Image input or output failed", exc_info=error)
+                    raise gr.Error("画像を読み込むか、生成結果を保存できませんでした。画像ファイルと空き容量を確認してください。") from error
+                raise error
+            image, metadata, stats = event[1]
+            yield image, [image, metadata], stats_text(stats), *refresh(), stats["id"]
+            return
 
-            image, metadata, stats = generate(
-                effective_prompt, references, width, height, steps, seed,
-                context=context, user_prompt=prompt, progress_callback=report_progress,
+    def run(persona_id, prompt, refs, size_preset, width, height, steps, seed, randomize_seed):
+        try:
+            image, metadata, stats = execute_generation(
+                persona_id, prompt, refs, size_preset, width, height, steps, seed,
+                randomize_seed, use_enhancer=True, live_preview=False,
             )
         except ValueError as error:
             raise gr.Error(str(error)) from error
@@ -248,12 +449,6 @@ def build_app():
 
     def custom_dimensions_visibility(size_preset):
         return gr.Row(visible=size_preset == "カスタム")
-
-    def run(persona_id, prompt, refs, size_preset, width, height, steps, seed, randomize_seed):
-        return run_with_progress(
-            persona_id, prompt, refs, size_preset, width, height, steps, seed,
-            randomize_seed, progress=lambda *_args, **_kwargs: None,
-        )
 
     def restore(index, identifiers):
         if not isinstance(index, int) or not 0 <= index < len(identifiers):
@@ -323,8 +518,8 @@ def build_app():
         )
         identifiers = gr.State([])
         selected_identifier = gr.State(None)
-        with gr.Row():
-            with gr.Column(scale=5, min_width=340):
+        with gr.Row(elem_id="studio-shell"):
+            with gr.Column(scale=4, min_width=340, elem_id="control-panel"):
                 persona = gr.Dropdown(
                     choices=persona_choices,
                     value="",
@@ -348,10 +543,21 @@ def build_app():
                     gr.Markdown("衣装や構図など、今回だけ追加したい参考画像がある場合に使います。")
                 size_preset = gr.Dropdown(
                     choices=list(size_presets),
-                    value="正方形 · 1024 × 1024",
+                    value="自動（Promptから判断）",
                     label="画像サイズ",
                 )
                 with gr.Accordion("詳細設定", open=False):
+                    use_enhancer = gr.Checkbox(
+                        label="短い指示を自動で具体化",
+                        value=PROMPT_ENHANCER_ENABLED,
+                        interactive=PROMPT_ENHANCER_ENABLED,
+                        info="参照画像なしはPE-T2I、Personaや参照画像ありはPE-I2Iを自動で使います。",
+                    )
+                    live_preview = gr.Checkbox(
+                        label="生成途中をプレビュー",
+                        value=True,
+                        info="生成中に数回、途中の画像を表示します。",
+                    )
                     randomize_seed = gr.Checkbox(label="毎回違うSeedを使う", value=True)
                     with gr.Row(visible=False) as custom_dimensions:
                         width = gr.Slider(512, 2752, value=1024, step=32, label="幅")
@@ -359,9 +565,9 @@ def build_app():
                     steps = gr.Slider(1, 80, value=40, step=1, label="生成ステップ")
                     seed = gr.Number(label="Seed", value=42, precision=0, minimum=0, maximum=4294967295)
                 create = gr.Button("画像を生成", variant="primary")
-            with gr.Column(scale=7, min_width=420):
+            with gr.Column(scale=8, min_width=480, elem_id="output-panel"):
                 result = gr.Image(label="生成結果", type="filepath", image_mode="RGBA", format="png",
-                                  interactive=False, height=620, elem_id="result-panel")
+                                  interactive=False, height=720, elem_id="result-panel")
                 with gr.Row():
                     reuse = gr.Button("この画像を参照に追加")
                     delete = gr.Button("削除", variant="stop")
@@ -371,7 +577,7 @@ def build_app():
                     with gr.Row():
                         cancel_delete = gr.Button("キャンセル")
                         confirm_delete = gr.Button("削除する", variant="stop")
-        gallery = gr.Gallery(label="最近の生成", columns=5, height=300, preview=False,
+        gallery = gr.Gallery(label="最近の生成", columns=8, height=260, preview=False,
                              elem_id="recent-generations")
         files = gr.File(label="PNG and generation record", file_count="multiple", visible=False)
         api_generate = gr.Button(visible=False)
@@ -391,7 +597,7 @@ def build_app():
                            outputs=custom_dimensions, queue=False, api_name=False)
         generation = create.click(run_with_progress,
                                   inputs=[persona, prompt, refs, size_preset, width, height,
-                                          steps, seed, randomize_seed],
+                                          steps, seed, randomize_seed, use_enhancer, live_preview],
                                   outputs=[result, files, stats, *refresh_outputs, selected_identifier],
                                   concurrency_limit=1, show_progress_on=[result], api_name=False)
         generation.then(hide_delete_confirmation, outputs=delete_confirmation,
@@ -419,6 +625,25 @@ def build_app():
     return app.queue(max_size=8)
 
 
+def resolve_theme(gr):
+    name = os.environ.get("PERSONA_THEME", "ocean").strip()
+    builtins = {
+        "soft": gr.themes.Soft,
+        "ocean": gr.themes.Ocean,
+        "monochrome": gr.themes.Monochrome,
+        "glass": gr.themes.Glass,
+    }
+    factory = builtins.get(name.lower())
+    if factory is not None:
+        return factory()
+    if "/" in name:
+        try:
+            return gr.Theme.from_hub(name)
+        except Exception as error:
+            logging.warning("Could not load Gradio theme %s: %s; using Ocean.", name, error)
+    return gr.themes.Ocean()
+
+
 def serve():
     import gradio as gr
 
@@ -428,7 +653,7 @@ def serve():
                        server_port=int(os.environ.get("PERSONA_PORT", "7860")), share=False,
                        allowed_paths=[str(OUTPUTS)], footer_links=[], run_history=False,
                        max_file_size="25mb",
-                       theme=gr.themes.Soft(primary_hue="emerald", neutral_hue="slate"),
+                       theme=resolve_theme(gr),
                        css=APP_CSS)
 
 

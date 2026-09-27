@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -23,12 +24,16 @@ class AppTests(unittest.TestCase):
         self.output_patch = patch.object(lab, "OUTPUTS", self.root)
         self.output_patch.start()
         self.addCleanup(self.output_patch.stop)
+        self.enhancer_patch = patch.object(lab, "PROMPT_ENHANCER_ENABLED", False)
+        self.enhancer_patch.start()
+        self.addCleanup(self.enhancer_patch.stop)
         self.app = lab.build_app()
         self.state = SessionState(self.app)
         self.functions = {fn.name: (index, fn.fn) for index, fn in self.app.fns.items()}
 
     def fake_generate(self, prompt, refs, width, height, steps, seed, context=None,
-                      user_prompt=None, progress_callback=None):
+                      user_prompt=None, progress_callback=None, preview_callback=None,
+                      enhancer=None):
         from PIL import Image
         from history import save_generation
 
@@ -38,6 +43,8 @@ class AppTests(unittest.TestCase):
             metadata["user_prompt"] = user_prompt
         if context:
             metadata["context"] = context
+        if enhancer:
+            metadata["prompt_enhancer"] = enhancer
         return save_generation(self.root, Image.new("RGBA", (width, height), "red"), metadata, refs or [])
 
     def test_generation_updates_table_gallery_and_selection_snapshot(self):
@@ -87,6 +94,30 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(restored[2]), 1)
         self.assertTrue(Path(restored[2][0]).is_file())
         self.assertEqual(len(response[3].samples), 1)
+
+    def test_manual_reference_rejects_server_path_outside_allowed_roots(self):
+        import gradio as gr
+
+        with tempfile.TemporaryDirectory() as external:
+            reference = Path(external) / "server-local.png"
+            reference.write_bytes(b"not an upload")
+            with self.assertRaises(gr.Error):
+                self.functions["run"][1](
+                    "", "Unsafe reference", [str(reference)],
+                    "カスタム", 512, 512, 4, 100, False,
+                )
+
+    def test_manual_reference_accepts_gradio_upload_root(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as uploads:
+            reference = Path(uploads) / "browser-upload.png"
+            Image.new("RGB", (64, 64), "blue").save(reference)
+            with patch.dict(os.environ, {"GRADIO_TEMP_DIR": uploads}):
+                self.assertEqual(
+                    self.lab.validate_manual_references([str(reference)]),
+                    [str(reference.resolve())],
+                )
 
     def test_persona_preset_adds_private_prompt_and_reference(self):
         from PIL import Image

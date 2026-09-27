@@ -9,7 +9,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_NAME = "Spark" + " Image Lab"
 UPSTREAM_SLUG = "spark" + "-image-lab"
-TOKENS = (UPSTREAM_NAME, UPSTREAM_SLUG)
+LEGACY_MODEL_MARKER = "spark" + "-model"
+TOKENS = (UPSTREAM_NAME, UPSTREAM_SLUG, LEGACY_MODEL_MARKER)
 
 
 def allowed(path: str, line: str) -> bool:

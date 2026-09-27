@@ -16,6 +16,15 @@
 
 ## Unreleased
 
+- Add Qwen-Image-2.1 PE-T2I / PE-I2I routing for short natural-language prompts.
+- Run the prompt enhancers through host vLLM with FP8 on GB10 when available,
+  communicate over private Unix sockets, and stop them with the Lab service.
+- Restrict manual reference paths to Gradio uploads or saved generations, lock
+  prompt-enhancer runtime files to the local user, and migrate the legacy model
+  identity marker to Persona Image Lab naming.
+- Use prompt-enhancer aspect-ratio output for the new automatic canvas mode.
+- Make the Gradio studio full-width, use the built-in Ocean theme, and show
+  intermediate generation previews by default.
 - Add confirmed permanent deletion for saved generations and clean up reference
   copies only after their final use.
 - Document tailnet-only Tailscale Serve as the preferred remote-access path while

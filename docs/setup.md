@@ -6,8 +6,12 @@
 - Target: NVIDIA DGX Spark systems built on GB10.
 - Working host NVIDIA driver and NVIDIA Container Toolkit.
 - Docker Engine and Compose plugin 2.30+ (the service uses `gpus: all`).
+- For the recommended prompt-enhancer path: host Python with vLLM and `ninja`.
+  Validation on GB10 uses vLLM 0.27.1. If unavailable, the application can
+  fall back to the slower Transformers implementation inside the Lab container.
 - Internet for the container build and one-time model download.
-- At least 80 GiB free initially; outputs and reference copies continue to grow.
+- At least 140 GiB free initially when both prompt enhancers are enabled; outputs
+  and reference copies continue to grow.
 
 Persona Image Lab has been validated on driver 580.178.04. The upstream
 benchmark baseline used 580.173.02. The base image is
@@ -24,6 +28,8 @@ builds a local image; it does not download model weights. `./persona doctor` che
 architecture, CUDA, GPU identity, output permissions, and model file presence.
 `./persona download --accept-model-license` downloads the pinned model revision
 only after explicit acceptance. Review the model's terms before using the flag.
+`./persona download-enhancers --accept-model-license` separately downloads the
+pinned PE-T2I and PE-I2I revisions under the same explicit-license workflow.
 
 The launcher runs containers with your host UID/GID to avoid root-owned output
 files. Run it as your ordinary user, not through `sudo`, after configuring
@@ -52,9 +58,17 @@ writable directories.
 ./persona stop
 ```
 
-Start performs preflight before launching. Container health stays in `starting`
-while the model loads, normally several minutes. The HTTP server starts only
-after the model is loaded. Logs show the local server URL when ready.
+Start performs preflight before launching. When prompt enhancement is enabled and
+host vLLM is available, the launcher also starts PE-T2I and PE-I2I as FP8 vLLM
+processes. They listen only on Unix-domain sockets under `cache/prompt-enhancer/`;
+no additional TCP ports are exposed. `./persona status` reports each enhancer as
+loading, ready, or stopped. `./persona stop` terminates both host PE processes as
+well as the Docker service.
+
+The accelerated PE services use `fp8_per_tensor` in eager mode. On the validated
+GB10 system this improved text expansion throughput while avoiding the long
+compile/CUDAGraph startup cost. If host vLLM or ninja is unavailable in the default
+`auto` mode, the launcher selects the in-container Transformers fallback instead.
 
 Before upgrading, stop the service and back up `outputs/`, `.env`, and any local
 code changes. Update to a reviewed commit/tag, rebuild, run tests, and restart:
@@ -102,3 +116,9 @@ Advanced direct-Python settings: `PERSONA_MODEL_DIR`, `PERSONA_OUTPUT_DIR`,
 the container to listen on its internal interface and restricts access at the
 host. Keep the default model revision; replacing model files manually can make
 generation provenance inaccurate and is outside this release's support scope.
+
+`.env` also accepts `PERSONA_PROMPT_ENHANCER=0` to disable PE-T2I/PE-I2I,
+`PERSONA_PE_BACKEND=auto|vllm|transformers` to control the runtime (`auto` is the
+default), and `PERSONA_THEME=soft|ocean|monochrome|glass` to select a built-in Gradio theme.
+Ocean is the reviewed default. Community theme IDs are accepted for local
+experimentation, but they require Hub access at startup and are not the default.

@@ -21,9 +21,11 @@ The everyday flow is intentionally small:
 1. Choose a private character preset.
 2. Describe the new scene.
 3. Optionally add outfit, pose, or style references.
-4. Choose a canvas preset and generate.
+4. Let the prompt enhancer choose a canvas, or pick one yourself, and generate.
 
-Advanced width, height, step, and seed controls remain available without
+Short natural-language prompts are expanded locally by the official Qwen
+Image 2.1 prompt-enhancer family. Text-only requests use PE-T2I; persona or
+reference-image requests use PE-I2I. Advanced width, height, step, and seed controls remain available without
 occupying the main interface.
 
 ## Requirements
@@ -31,11 +33,16 @@ occupying the main interface.
 - NVIDIA DGX Spark / GB10
 - Docker with NVIDIA GPU support
 - Docker Compose 2.30+
-- About 80 GiB free disk space for the container, model, build cache, and output
+- Host vLLM plus `ninja` is recommended for accelerated PE-T2I / PE-I2I. The
+  validated GB10 setup uses vLLM 0.27.1; a slower in-container Transformers
+  fallback remains available.
+- About 140 GiB free disk space for the container, image model, both prompt
+  enhancers, build cache, and output
 
-The host does not need a Python, PyTorch, Diffusers, or Gradio environment.
-Application code is copied into the local Docker image at build time rather
-than bind-mounted from the checkout.
+The image-generation application does not depend on a host PyTorch, Diffusers, or
+Gradio environment. Application code is copied into the local Docker image rather
+than bind-mounted from the checkout. The optional accelerated prompt-enhancer path
+uses the host vLLM installation.
 
 ## Quick start
 
@@ -45,6 +52,7 @@ cd persona-image-lab
 ./persona build
 ./persona doctor
 ./persona download --accept-model-license
+./persona download-enhancers --accept-model-license
 ./persona start
 ```
 
@@ -74,6 +82,13 @@ Useful commands:
 ./persona test
 ./persona stop
 ```
+
+The two prompt-enhancer checkpoints are separate Qwen3.5-VL 9B models. When host
+vLLM is available, `./persona start` loads both as FP8 services and exposes them
+only through Unix-domain sockets under `cache/prompt-enhancer/`. `./persona stop`
+terminates them together with the image-generation service. Prompt enhancement
+and the intermediate generation preview are enabled by default and can be
+disabled from Advanced settings.
 
 ## Private persona presets
 

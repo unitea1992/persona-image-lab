@@ -26,11 +26,15 @@ https://<Sparkのホスト名>.<tailnet名>.ts.net/
 
 Persona Image Labは常駐を前提にしていません。モデルを使わない時間はコンテナを止め、ローカルLLMなど別の用途へメモリを戻します。
 
+Prompt Enhancerは、host側のvLLMが利用できればPE-T2I / PE-I2IをFP8で起動し、LabとはUnix socketだけで通信します。`./persona stop` ではこれらもまとめて終了します。
+
 Tailscale Serveの設定は残して構いません。次回も同じURLを使えます。
 
 詳しい普段使いは [日常運用ガイド](docs/ja/daily-use.md) を参照してください。
 
-プロンプトは日本語の自然文で入力できます。キャラクターの固定情報はPersona側で扱うため、毎回長い設定を書く必要はありません。場面、服装、表情、構図など、その画像で変えたい内容を普通の文章で指定します。
+プロンプトは日本語の自然文で入力できます。短い指示は標準でPrompt Enhancerが具体化するため、Stable Diffusion系のタグ列へ書き換える必要はありません。参照画像がない生成はPE-T2I、Personaや参照画像を使う生成はPE-I2Iへ自動で振り分けます。
+
+たとえば `ゲームに熱中するキャラクターA` のような短い指示から始められます。本人性はPersona側で扱うため、毎回キャラクター設定を書き直す必要もありません。
 
 ## 初回だけ必要な準備
 
@@ -38,7 +42,12 @@ Tailscale Serveの設定は残して構いません。次回も同じURLを使�
 ./persona build
 ./persona doctor
 ./persona download --accept-model-license
+./persona download-enhancers --accept-model-license
 ```
+
+Qwen-Image-2.1本体に加え、PE-T2I / PE-I2Iの2モデルをローカルへ保存します。3モデルともQwen Research Licenseの対象で、非商用の研究・評価用途を前提とします。
+
+検証したGB10環境ではhostのvLLM 0.27.1を利用しています。vLLMが使えない環境ではTransformersへフォールバックできますが、Prompt展開はかなり遅くなります。
 
 別のPCから使う場合は、Spark側でTailscale Serveを一度設定します。
 
