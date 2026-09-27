@@ -44,6 +44,14 @@ Gradio environment. Application code is copied into the local Docker image rathe
 than bind-mounted from the checkout. The optional accelerated prompt-enhancer path
 uses the host vLLM installation.
 
+Qwen-Image-2.1 denoising uses Diffusers regional `torch.compile` by default on
+GB10. Only the repeated transformer blocks are compiled, which avoids the current
+full-transformer compile issues while preserving the model, scheduler, 40-step
+default, and built-in prefix KV cache. TorchInductor artifacts are kept under the
+mounted `cache/torchinductor/` directory so compatible kernels can be reused after
+container restarts. Set `PERSONA_TORCH_COMPILE=0` only for troubleshooting or an
+eager-mode comparison.
+
 ## Quick start
 
 ```bash

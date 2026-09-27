@@ -25,12 +25,14 @@ from persona_profiles import compose_prompt, get_persona, load_personas
 from prompt_enhancer import (PromptEnhancerCancelled, PromptEnhancerError,
                              enhance_prompt)
 from settings import (APP_VERSION, MODEL_DIR, MODEL_ID, MODEL_REVISION, OUTPUTS,
-                      PROMPT_ENHANCER_ENABLED, ROOT, prepare_output_directory)
+                      PROMPT_ENHANCER_ENABLED, ROOT, TORCH_COMPILE_ENABLED,
+                      prepare_output_directory)
 
 DEMOS = json.loads((ROOT / "demos.json").read_text())
 LOCK = threading.Lock()
 HISTORY_LOCK = threading.Lock()
 PIPE = None
+PIPE_ACCELERATION = None
 _GENERATION_CANCEL_LOCK = threading.Lock()
 _ACTIVE_GENERATION_CANCEL = None
 
@@ -143,8 +145,19 @@ APP_CSS = """
 """
 
 
+def _configure_transformer_acceleration(pipe):
+    if not TORCH_COMPILE_ENABLED:
+        return "eager"
+    compile_repeated_blocks = getattr(pipe.transformer, "compile_repeated_blocks", None)
+    if not callable(compile_repeated_blocks):
+        logging.warning("Regional torch.compile is unavailable; using eager inference.")
+        return "eager"
+    compile_repeated_blocks(fullgraph=True)
+    return "regional-compile"
+
+
 def pipeline():
-    global PIPE
+    global PIPE, PIPE_ACCELERATION
     if PIPE is None:
         import torch
         from diffusers import QwenImage21Pipeline
@@ -160,7 +173,12 @@ def pipeline():
             str(MODEL_DIR), torch_dtype=torch.bfloat16,
             local_files_only=True,
         ).to("cuda")
-        print(f"Model loaded in {time.perf_counter() - started:.1f}s", flush=True)
+        PIPE_ACCELERATION = _configure_transformer_acceleration(PIPE)
+        print(
+            f"Model loaded in {time.perf_counter() - started:.1f}s "
+            f"({PIPE_ACCELERATION})",
+            flush=True,
+        )
     return PIPE
 
 
@@ -234,6 +252,7 @@ def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42
         "prompt": prompt,
         "width": image.width, "height": image.height, "steps": steps,
         "seed": seed, "true_cfg_scale": 1.0, "use_kv_cache": True,
+        "acceleration": PIPE_ACCELERATION or "eager",
         "elapsed_seconds": round(elapsed, 2), "peak_allocated_gib": round(memory_gib, 2),
         "mode": image.mode, "alpha_extrema": alpha_extrema,
         "versions": {p: importlib.metadata.version(p) for p in ("torch", "diffusers", "transformers")},

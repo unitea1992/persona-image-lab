@@ -54,6 +54,10 @@
   intermediate denoising previews. The result image now changes only on completion.
 - Show the prompt-enhancer rewrite separately without replacing the user's input,
   and restore that expanded prompt when opening generation history.
+- Enable regional `torch.compile` for the repeated Qwen-Image-2.1 transformer
+  blocks on GB10 and persist TorchInductor artifacts in the mounted cache. This
+  keeps the sampling path and prefix KV cache intact while reducing steady-state
+  1024x1024 / 40-step latency in the validated setup.
 
 ## 0.1.0-alpha.2 - 2026-09-20
 

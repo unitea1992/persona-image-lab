@@ -35,6 +35,8 @@ Persona Image Labは常駐を前提にしていません。モデルを使わな
 
 Prompt Enhancerは、host側のvLLMが利用できればPE-T2I / PE-I2IをFP8で起動し、LabとはUnix socketだけで通信します。`./persona stop` ではこれらもまとめて終了します。
 
+画像生成側は、GB10で検証したregional `torch.compile` を標準で使います。Qwen-Image-2.1の繰り返しTransformer blockだけをコンパイルするため、モデルや40 step、prefix KV cacheはそのままです。生成形状を初めて使うときだけコンパイル時間が加わる場合がありますが、TorchInductorの成果物は `cache/torchinductor/` に保存され、同じ環境ならコンテナ再起動後も再利用されます。比較やトラブルシュート時だけ `PERSONA_TORCH_COMPILE=0` で無効化できます。
+
 Tailscale Serveの設定は残して構いません。次回も同じURLを使えます。
 
 詳しい普段使いは [日常運用ガイド](docs/ja/daily-use.md) を参照してください。

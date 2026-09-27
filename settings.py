@@ -16,6 +16,7 @@ PE_T2I_DIR = Path(os.environ.get("PERSONA_PE_T2I_DIR", MODEL_DIR / "prompt-enhan
 PE_I2I_DIR = Path(os.environ.get("PERSONA_PE_I2I_DIR", MODEL_DIR / "prompt-enhancer-i2i")).resolve()
 PROMPT_ENHANCER_ENABLED = os.environ.get("PERSONA_PROMPT_ENHANCER", "1") != "0"
 PROMPT_ENHANCER_BACKEND = os.environ.get("PERSONA_PE_BACKEND", "auto").strip().lower()
+TORCH_COMPILE_ENABLED = os.environ.get("PERSONA_TORCH_COMPILE", "1") != "0"
 PE_T2I_SOCKET = Path(os.environ.get(
     "PERSONA_PE_T2I_SOCKET", ROOT / "cache" / "prompt-enhancer" / "t2i.sock"
 )).resolve()

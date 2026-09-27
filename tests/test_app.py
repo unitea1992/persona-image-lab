@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 RUNTIME_AVAILABLE = all(importlib.util.find_spec(name) for name in ("gradio", "PIL"))
 
@@ -47,6 +47,28 @@ class AppTests(unittest.TestCase):
         if enhancer:
             metadata["prompt_enhancer"] = enhancer
         return save_generation(self.root, Image.new("RGBA", (width, height), "red"), metadata, refs or [])
+
+    def test_transformer_uses_regional_compile_when_enabled(self):
+        compile_repeated_blocks = Mock()
+        pipe = SimpleNamespace(
+            transformer=SimpleNamespace(compile_repeated_blocks=compile_repeated_blocks)
+        )
+        with patch.object(self.lab, "TORCH_COMPILE_ENABLED", True):
+            mode = self.lab._configure_transformer_acceleration(pipe)
+
+        self.assertEqual(mode, "regional-compile")
+        compile_repeated_blocks.assert_called_once_with(fullgraph=True)
+
+    def test_transformer_compile_can_be_disabled(self):
+        compile_repeated_blocks = Mock()
+        pipe = SimpleNamespace(
+            transformer=SimpleNamespace(compile_repeated_blocks=compile_repeated_blocks)
+        )
+        with patch.object(self.lab, "TORCH_COMPILE_ENABLED", False):
+            mode = self.lab._configure_transformer_acceleration(pipe)
+
+        self.assertEqual(mode, "eager")
+        compile_repeated_blocks.assert_not_called()
 
     def test_stop_request_marks_active_generation_for_cancellation(self):
         event = self.lab._new_generation_cancel_event()

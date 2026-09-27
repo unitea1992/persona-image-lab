@@ -23,6 +23,8 @@ services:
       HF_HUB_DISABLE_TELEMETRY: "1"
       PERSONA_PROMPT_ENHANCER: "${PERSONA_PROMPT_ENHANCER:-1}"
       PERSONA_PE_BACKEND: "${PERSONA_PE_BACKEND:-auto}"
+      PERSONA_TORCH_COMPILE: "${PERSONA_TORCH_COMPILE:-1}"
+      TORCHINDUCTOR_CACHE_DIR: /workspace/cache/torchinductor
       PERSONA_PE_T2I_SOCKET: /workspace/cache/prompt-enhancer/t2i.sock
       PERSONA_PE_I2I_SOCKET: /workspace/cache/prompt-enhancer/i2i.sock
       PERSONA_THEME: "${PERSONA_THEME:-ocean}"
