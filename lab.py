@@ -44,7 +44,16 @@ APP_CSS = """
 #persona-status { min-height: 2.4rem; opacity: 0.82; }
 #result-panel { min-height: 68vh; }
 #result-panel img { object-fit: contain !important; max-height: 76vh !important; }
-#generation-stats { min-height: 1.5rem; opacity: 0.72; }
+#generation-stats {
+  min-height: 2.4rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border-color-primary);
+  border-radius: var(--radius-md);
+  background: var(--background-fill-secondary);
+  opacity: 0.9;
+}
+#history-toolbar { align-items: center; margin-top: 0.75rem; }
+#batch-selection-status { min-height: 1.5rem; opacity: 0.78; }
 #delete-confirmation { border-left: 3px solid var(--color-accent); padding-left: 0.8rem; }
 #recent-generations { margin-top: 0.75rem; }
 #result-panel button[aria-label="Share"],
@@ -292,16 +301,23 @@ def build_app():
         context = stats.get("context")
         persona_name = context.get("persona_name") if isinstance(context, dict) else None
         prefix = f"{persona_name} ・ " if persona_name else ""
-        return (f"{prefix}{stats.get('elapsed_seconds', 0):.1f}秒 ・ "
+        return (f"**完了** ・ {prefix}{stats.get('elapsed_seconds', 0):.1f}秒 ・ "
                 f"{stats['width']} × {stats['height']} ・ Seed {stats['seed']}")
 
-    def refresh():
+    def gallery_values(entries, selected_ids=None):
+        selected = set(selected_ids or [])
+        return [
+            (entry['image_path'], "選択中" if entry['id'] in selected else None)
+            for entry in entries
+        ]
+
+    def refresh(selected_ids=None):
         entries = load_history(OUTPUTS)
         samples = [[display_prompt(r), ", ".join(ref.get('filename', 'Reference')
                                          for ref in r.get('references', [])),
                     r['width'], r['height'],
                     r['steps'], r['seed'], r.get('elapsed_seconds', 0)] for r in entries]
-        return gr.Dataset(samples=samples), [r['image_path'] for r in entries], [r['id'] for r in entries]
+        return gr.Dataset(samples=samples), gallery_values(entries, selected_ids), [r['id'] for r in entries]
 
     def persona_info(identifier):
         if not identifier:
@@ -398,6 +414,8 @@ def build_app():
                 if event[1] == "画像生成を準備中…":
                     generation_started = time.perf_counter()
                 progress(0, desc=event[1])
+                yield (gr.skip(), gr.skip(), f"**{event[1]}**", gr.skip(), gr.skip(),
+                       gr.skip(), gr.skip(), True)
                 continue
             if kind == "progress":
                 _, step, total = event
@@ -409,17 +427,23 @@ def build_app():
                     remaining = (elapsed / step) * (total - step)
                     description = f"生成中 {step}/{total} ・ 残り約{remaining:.0f}秒"
                 progress((step, total), desc=description)
+                yield (gr.skip(), gr.skip(), f"**{description}**", gr.skip(), gr.skip(),
+                       gr.skip(), gr.skip(), True)
                 continue
             if kind == "preview":
                 _, step, total, image = event
-                progress((step, total), desc=f"生成中 {step}/{total} ・ プレビュー更新")
-                yield image, gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+                description = f"生成中 {step}/{total} ・ プレビュー更新"
+                progress((step, total), desc=description)
+                yield (image, gr.skip(), f"**{description}**", gr.skip(), gr.skip(),
+                       gr.skip(), gr.skip(), True)
                 continue
             if kind == "warning":
                 gr.Warning(event[1])
                 continue
             if kind == "error":
                 error = event[1]
+                yield (gr.skip(), gr.skip(), "**生成に失敗しました**", gr.skip(), gr.skip(),
+                       gr.skip(), gr.skip(), False)
                 if isinstance(error, ValueError):
                     raise gr.Error(str(error)) from error
                 if isinstance(error, TorchOutOfMemoryError):
@@ -429,7 +453,7 @@ def build_app():
                     raise gr.Error("画像を読み込むか、生成結果を保存できませんでした。画像ファイルと空き容量を確認してください。") from error
                 raise error
             image, metadata, stats = event[1]
-            yield image, [image, metadata], stats_text(stats), *refresh(), stats["id"]
+            yield image, [image, metadata], stats_text(stats), *refresh(), stats["id"], False
             return
 
     def run(persona_id, prompt, refs, size_preset, width, height, steps, seed, randomize_seed):
@@ -449,6 +473,11 @@ def build_app():
 
     def custom_dimensions_visibility(size_preset):
         return gr.Row(visible=size_preset == "カスタム")
+
+    def begin_generation():
+        return (True, "**生成を開始しています…**", False, [],
+                gr.Markdown(value="", visible=False), gr.Button(visible=False),
+                gr.Group(visible=False), gr.Button(interactive=True))
 
     def restore(index, identifiers):
         if not isinstance(index, int) or not 0 <= index < len(identifiers):
@@ -482,8 +511,30 @@ def build_app():
                 [entry['image_path'], entry['metadata_path']], stats_text(entry),
                 entry['id'])
 
-    def select_image(identifiers, event: gr.SelectData):
-        return restore(event.index, identifiers)
+    def toggle_batch_selection(index, identifiers, selected_ids):
+        if not isinstance(index, int) or not 0 <= index < len(identifiers):
+            raise gr.Error("生成履歴から画像を選んでください。")
+        selected = set(selected_ids or [])
+        identifier = identifiers[index]
+        if identifier in selected:
+            selected.remove(identifier)
+        else:
+            selected.add(identifier)
+        return [identifier for identifier in identifiers if identifier in selected]
+
+    def select_image(identifiers, generation_active, batch_mode, selected_ids,
+                     event: gr.SelectData):
+        if generation_active:
+            gr.Info("生成中は履歴プレビューを固定しています。完了後に選択できます。")
+            return (*([gr.skip()] * 13), selected_ids, gr.skip(), gr.skip(), gr.skip())
+        if batch_mode:
+            selected = toggle_batch_selection(event.index, identifiers, selected_ids)
+            entries = load_history(OUTPUTS)
+            status = f"**{len(selected)}件選択中**" if selected else "画像をクリックして選択します。"
+            return (*([gr.skip()] * 13), selected, gallery_values(entries, selected),
+                    gr.Markdown(value=status, visible=True),
+                    gr.Button(visible=bool(selected)))
+        return (*restore(event.index, identifiers), selected_ids, gr.skip(), gr.skip(), gr.skip())
 
     def use_reference(path):
         if not path:
@@ -497,6 +548,40 @@ def build_app():
 
     def hide_delete_confirmation():
         return gr.Group(visible=False)
+
+    def toggle_batch_mode(enabled):
+        entries = load_history(OUTPUTS)
+        status = "画像をクリックして選択します。" if enabled else ""
+        return ([], gallery_values(entries),
+                gr.Markdown(value=status, visible=enabled),
+                gr.Button(visible=False), gr.Group(visible=False),
+                gr.Button(interactive=not enabled))
+
+    def request_batch_delete(selected_ids):
+        count = len(selected_ids or [])
+        if not count:
+            raise gr.Error("削除する生成結果を選んでください。")
+        return (gr.Markdown(value=f"**選択した{count}件を完全に削除します。** 元に戻せません。"),
+                gr.Group(visible=True))
+
+    def delete_batch(selected_ids):
+        identifiers_to_delete = list(dict.fromkeys(selected_ids or []))
+        if not identifiers_to_delete:
+            raise gr.Error("削除する生成結果を選んでください。")
+        try:
+            with HISTORY_LOCK:
+                for identifier in identifiers_to_delete:
+                    restore_generation(OUTPUTS, identifier)
+                for identifier in identifiers_to_delete:
+                    delete_generation(OUTPUTS, identifier)
+        except ValueError as error:
+            raise gr.Error(str(error)) from error
+        except OSError as error:
+            logging.exception("Batch generation deletion failed")
+            raise gr.Error("生成結果を完全に削除できませんでした。出力先の権限を確認してください。") from error
+        return (None, None, "", None, [],
+                gr.Markdown(value="画像をクリックして選択します。", visible=True),
+                gr.Button(visible=False), gr.Group(visible=False), *refresh())
 
     def delete_selected(identifier):
         if not identifier:
@@ -518,6 +603,8 @@ def build_app():
         )
         identifiers = gr.State([])
         selected_identifier = gr.State(None)
+        generation_active = gr.State(False)
+        batch_selected = gr.State([])
         with gr.Row(elem_id="studio-shell"):
             with gr.Column(scale=4, min_width=340, elem_id="control-panel"):
                 persona = gr.Dropdown(
@@ -571,13 +658,23 @@ def build_app():
                 with gr.Row():
                     reuse = gr.Button("この画像を参照に追加")
                     delete = gr.Button("削除", variant="stop")
-                stats = gr.Markdown("", visible=False, elem_id="generation-stats")
+                stats = gr.Markdown("待機中", visible=True, elem_id="generation-stats")
                 with gr.Group(visible=False, elem_id="delete-confirmation") as delete_confirmation:
                     gr.Markdown("**この生成結果を完全に削除します。** 元に戻せません。")
                     with gr.Row():
                         cancel_delete = gr.Button("キャンセル")
                         confirm_delete = gr.Button("削除する", variant="stop")
-        gallery = gr.Gallery(label="最近の生成", columns=8, height=260, preview=False,
+        with gr.Row(elem_id="history-toolbar"):
+            batch_mode = gr.Checkbox(label="複数選択して削除", value=False)
+            batch_status = gr.Markdown("", visible=False, elem_id="batch-selection-status")
+            batch_delete = gr.Button("選択した画像を削除", variant="stop", visible=False)
+        with gr.Group(visible=False) as batch_delete_confirmation:
+            batch_delete_text = gr.Markdown("")
+            with gr.Row():
+                batch_cancel_delete = gr.Button("キャンセル")
+                batch_confirm_delete = gr.Button("まとめて削除", variant="stop")
+        gallery = gr.Gallery(label="最近の生成", columns=8, height=260,
+                             allow_preview=False, preview=False,
                              elem_id="recent-generations")
         files = gr.File(label="PNG and generation record", file_count="multiple", visible=False)
         api_generate = gr.Button(visible=False)
@@ -595,11 +692,19 @@ def build_app():
         persona.change(persona_info, inputs=persona, outputs=persona_status, queue=False, api_name=False)
         size_preset.change(custom_dimensions_visibility, inputs=size_preset,
                            outputs=custom_dimensions, queue=False, api_name=False)
-        generation = create.click(run_with_progress,
-                                  inputs=[persona, prompt, refs, size_preset, width, height,
-                                          steps, seed, randomize_seed, use_enhancer, live_preview],
-                                  outputs=[result, files, stats, *refresh_outputs, selected_identifier],
-                                  concurrency_limit=1, show_progress_on=[result], api_name=False)
+        generation_start = create.click(begin_generation,
+                                        outputs=[generation_active, stats, batch_mode,
+                                                 batch_selected, batch_status, batch_delete,
+                                                 batch_delete_confirmation, delete],
+                                        queue=False, api_name=False)
+        generation = generation_start.then(
+            run_with_progress,
+            inputs=[persona, prompt, refs, size_preset, width, height,
+                    steps, seed, randomize_seed, use_enhancer, live_preview],
+            outputs=[result, files, stats, *refresh_outputs, selected_identifier,
+                     generation_active],
+            concurrency_limit=1, show_progress_on=[result], api_name=False,
+        )
         generation.then(hide_delete_confirmation, outputs=delete_confirmation,
                         queue=False, api_name=False)
         api_generate.click(run,
@@ -607,8 +712,12 @@ def build_app():
                                    steps, seed, randomize_seed],
                            outputs=[result, files, stats, *refresh_outputs, selected_identifier],
                            concurrency_limit=1, api_name="generate")
-        selection = gallery.select(select_image, inputs=identifiers, outputs=restore_outputs,
-                                   queue=False, api_name=False)
+        selection = gallery.select(
+            select_image,
+            inputs=[identifiers, generation_active, batch_mode, batch_selected],
+            outputs=[*restore_outputs, batch_selected, gallery, batch_status, batch_delete],
+            queue=False, api_name=False,
+        )
         selection.then(hide_delete_confirmation, outputs=delete_confirmation,
                        queue=False, api_name=False)
         history.click(restore, inputs=[history, identifiers], outputs=restore_outputs,
@@ -622,6 +731,23 @@ def build_app():
                              outputs=[refs, result, stats, selected_identifier,
                                       delete_confirmation, *refresh_outputs],
                              queue=False, api_name=False)
+        batch_mode.change(toggle_batch_mode, inputs=batch_mode,
+                          outputs=[batch_selected, gallery, batch_status, batch_delete,
+                                   batch_delete_confirmation, delete],
+                          queue=False, api_name=False)
+        batch_delete.click(request_batch_delete, inputs=batch_selected,
+                           outputs=[batch_delete_text, batch_delete_confirmation],
+                           queue=False, api_name=False)
+        batch_cancel_delete.click(hide_delete_confirmation,
+                                  outputs=batch_delete_confirmation,
+                                  queue=False, api_name=False)
+        batch_confirm_delete.click(
+            delete_batch, inputs=batch_selected,
+            outputs=[refs, result, stats, selected_identifier, batch_selected,
+                     batch_status, batch_delete, batch_delete_confirmation,
+                     *refresh_outputs],
+            queue=False, api_name=False,
+        )
     return app.queue(max_size=8)
 
 

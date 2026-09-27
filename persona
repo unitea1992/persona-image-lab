@@ -25,6 +25,70 @@ compose_prompt_enhancer="$({ docker compose config --environment 2>/dev/null || 
 prompt_enhancer="${compose_prompt_enhancer:-${PERSONA_PROMPT_ENHANCER:-1}}"
 compose_pe_backend="$({ docker compose config --environment 2>/dev/null || true; } | sed -n 's/^PERSONA_PE_BACKEND=//p' | tail -n 1)"
 pe_backend="${compose_pe_backend:-${PERSONA_PE_BACKEND:-auto}}"
+compose_http_port="$({ docker compose config --environment 2>/dev/null || true; } | sed -n 's/^PERSONA_HTTP_PORT=//p' | tail -n 1)"
+http_port="${compose_http_port:-${PERSONA_HTTP_PORT:-7862}}"
+
+lab_state() {
+  local container state
+  container="$(docker compose ps -q lab 2>/dev/null || true)"
+  [[ -n "$container" ]] || { printf 'stopped'; return; }
+  state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+  case "$state" in
+    healthy|running) printf 'ready' ;;
+    starting|created|restarting) printf 'loading' ;;
+    unhealthy|exited|dead) printf '%s' "$state" ;;
+    *) printf '%s' "${state:-unknown}" ;;
+  esac
+}
+
+pe_state() {
+  local name="$1" line
+  line="$(./scripts/prompt-enhancers.sh status 2>/dev/null | sed -n "s/^${name}: //p" | head -n 1)"
+  case "$line" in
+    ready*) printf 'ready' ;;
+    loading*) printf 'loading' ;;
+    stopped*) printf 'stopped' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+wait_for_startup() {
+  local expect_pe="$1" timeout="${PERSONA_START_TIMEOUT:-600}"
+  local started now elapsed image_state t2i_state i2i_state summary last_summary=''
+  started="$(date +%s)"
+  printf '起動完了を待っています。\n'
+  while :; do
+    now="$(date +%s)"
+    elapsed=$((now - started))
+    image_state="$(lab_state)"
+    if [[ "$expect_pe" == 1 ]]; then
+      t2i_state="$(pe_state t2i)"
+      i2i_state="$(pe_state i2i)"
+      summary="Image: $image_state | PE-T2I: $t2i_state | PE-I2I: $i2i_state"
+    else
+      summary="Image: $image_state | Prompt Enhancer: ${2:-disabled/fallback}"
+      t2i_state=ready
+      i2i_state=ready
+    fi
+    if [[ "$summary" != "$last_summary" || $((elapsed % 30)) -lt 5 ]]; then
+      printf '[%3ss] %s\n' "$elapsed" "$summary"
+      last_summary="$summary"
+    fi
+    if [[ "$image_state" == ready && "$t2i_state" == ready && "$i2i_state" == ready ]]; then
+      printf '起動完了 (%ss) — http://127.0.0.1:%s/\n' "$elapsed" "$http_port"
+      return 0
+    fi
+    if [[ "$image_state" == unhealthy || "$image_state" == exited || "$image_state" == dead ]]; then
+      printf 'Image service failed during startup. See ./persona logs.\n' >&2
+      return 1
+    fi
+    if ((elapsed >= timeout)); then
+      printf 'Startup timed out after %ss. Services may still be loading; check ./persona status.\n' "$timeout" >&2
+      return 1
+    fi
+    sleep 5
+  done
+}
 
 command="${1:-help}"
 if (($#)); then shift; fi
@@ -35,20 +99,25 @@ case "$command" in
   download-enhancers) docker compose run --rm --no-deps lab python manage.py download-enhancers "$@" ;;
   start)
     docker compose run --rm --no-deps lab python manage.py doctor --require-model
+    wait_for_pe=0
+    pe_wait_label=disabled
     if [[ "$prompt_enhancer" != 0 && "$pe_backend" != transformers ]]; then
       if ./scripts/prompt-enhancers.sh start; then
         export PERSONA_PE_BACKEND=vllm
+        wait_for_pe=1
       elif [[ "$pe_backend" == vllm ]]; then
         exit 2
       else
         printf 'Host vLLM unavailable; the app will use the slower Transformers fallback.\n' >&2
         export PERSONA_PE_BACKEND=transformers
+        pe_wait_label='Transformers fallback'
       fi
     else
       ./scripts/prompt-enhancers.sh stop
+      [[ "$prompt_enhancer" == 0 ]] || pe_wait_label='Transformers fallback'
     fi
     docker compose up -d "$@"
-    printf 'Loading the image model and prompt enhancers. Check ./persona status; browser port defaults to 7862.\n'
+    wait_for_startup "$wait_for_pe" "$pe_wait_label"
     ;;
   stop)
     docker compose stop "$@"

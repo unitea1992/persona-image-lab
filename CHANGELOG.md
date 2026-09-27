@@ -35,6 +35,13 @@
   concise reference-role instruction and restore only the original user prompt.
 - Simplify and localize the Gradio studio UI in Japanese, surface deletion next
   to the selected result, and report denoising step progress with an ETA.
+- Keep generation progress visible below the result, prevent history selection
+  from racing with an active generation, and add confirmed multi-select history
+  deletion.
+- Make `./persona start` wait for Image / PE-T2I / PE-I2I readiness while
+  printing startup progress instead of requiring log monitoring.
+- Pin CI to Ubuntu 24.04 and update checkout/setup-python to their current
+  Node 24-based major versions before the runner migrations become mandatory.
 
 ## 0.1.0-alpha.2 - 2026-09-20
 

@@ -56,6 +56,11 @@ cd persona-image-lab
 ./persona start
 ```
 
+`./persona start` waits for the image service and the required prompt-enhancer
+services to become ready while printing their startup state. The default wait
+limit is 600 seconds; override it for a slow first boot with
+`PERSONA_START_TIMEOUT=900 ./persona start`.
+
 Open <http://127.0.0.1:7862/> on the Spark. For another computer on the same
 Tailscale tailnet, keep the application bound to loopback and expose it with
 Tailscale Serve:
@@ -89,6 +94,12 @@ only through Unix-domain sockets under `cache/prompt-enhancer/`. `./persona stop
 terminates them together with the image-generation service. Prompt enhancement
 and the intermediate generation preview are enabled by default and can be
 disabled from Advanced settings.
+
+Generation progress is also shown persistently below the result instead of only
+in Gradio's transient progress overlay. History selection is ignored while a
+generation is active so a live preview cannot overwrite a history view. The
+recent gallery also supports an explicit multi-select mode for confirmed batch
+deletion.
 
 ## Private persona presets
 

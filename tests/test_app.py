@@ -5,6 +5,7 @@ import importlib.util
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -165,6 +166,36 @@ class AppTests(unittest.TestCase):
         self.assertEqual(deleted[:4], (None, None, "", None))
         self.assertEqual(deleted[-2:], ([], []))
         self.assertEqual(self.lab.load_history(self.root), [])
+
+    def test_batch_selection_and_delete_multiple_generations(self):
+        with patch.object(self.lab, "generate", self.fake_generate):
+            self.functions["run"][1](
+                "", "First disposable image", None, "カスタム", 512, 512, 4, 201, False
+            )
+            self.functions["run"][1](
+                "", "Second disposable image", None, "カスタム", 512, 512, 4, 202, False
+            )
+        identifiers = [entry["id"] for entry in self.lab.load_history(self.root)]
+        first = self.functions["select_image"][1](
+            identifiers, False, True, [], SimpleNamespace(index=0)
+        )
+        selected = first[13]
+        self.assertEqual(selected, [identifiers[0]])
+        second = self.functions["select_image"][1](
+            identifiers, False, True, selected, SimpleNamespace(index=1)
+        )
+        selected = second[13]
+        self.assertEqual(set(selected), set(identifiers))
+
+        deleted = self.functions["delete_batch"][1](selected)
+        self.assertEqual(deleted[4], [])
+        self.assertEqual(self.lab.load_history(self.root), [])
+
+    def test_gallery_selection_is_ignored_while_generation_is_active(self):
+        response = self.functions["select_image"][1](
+            ["missing-but-must-not-be-restored"], True, False, [], SimpleNamespace(index=0)
+        )
+        self.assertEqual(response[13], [])
 
     def test_delete_is_private_and_generate_api_contract_is_unchanged(self):
         endpoints = self.app.get_api_info()["named_endpoints"]
