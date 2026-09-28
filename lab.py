@@ -24,15 +24,16 @@ from manage import model_install_error
 from persona_profiles import compose_prompt, get_persona, load_personas
 from prompt_enhancer import (PromptEnhancerCancelled, PromptEnhancerError,
                              enhance_prompt)
-from settings import (APP_VERSION, MODEL_DIR, MODEL_ID, MODEL_REVISION, OUTPUTS,
-                      PROMPT_ENHANCER_ENABLED, ROOT, TORCH_COMPILE_ENABLED,
-                      prepare_output_directory)
+from settings import (APP_VERSION, DEFAULT_STEPS, FP8_MODE, MODEL_DIR, MODEL_ID,
+                      MODEL_REVISION, OUTPUTS, PROMPT_ENHANCER_ENABLED, ROOT,
+                      TORCH_COMPILE_ENABLED, prepare_output_directory)
 
 DEMOS = json.loads((ROOT / "demos.json").read_text())
 LOCK = threading.Lock()
 HISTORY_LOCK = threading.Lock()
 PIPE = None
 PIPE_ACCELERATION = None
+PIPE_PRECISION = None
 _GENERATION_CANCEL_LOCK = threading.Lock()
 _ACTIVE_GENERATION_CANCEL = None
 
@@ -145,6 +146,43 @@ APP_CSS = """
 """
 
 
+def _apply_transformer_quantization(pipe):
+    """Apply GB10 torchao FP8 quantization to the DiT before compiling.
+
+    PERSONA_FP8=dynamic: FP8 dynamic activations + FP8 weights. Fastest for
+    repeated same-shape prompts, but heavy recompile on new prompt lengths,
+    so the shipped default stays off.
+    PERSONA_FP8=weight-only: BF16 compute with FP8-stored weights (memory
+    only, slower than BF16 here). off/none (default): no-op.
+    Returns the precision actually in effect; failures fall back to "bf16"
+    with a warning so callers never record a requested-but-inactive mode.
+    """
+    mode = (FP8_MODE or "off").strip().lower()
+    if mode in ("off", "none", "0", "false", "disabled"):
+        return "bf16"
+    try:
+        from torchao.quantization import (Float8DynamicActivationFloat8WeightConfig,
+                                          Float8WeightOnlyConfig, PerRow, quantize_)
+    except ImportError:
+        logging.warning("torchao is unavailable; continuing without FP8 quantization.")
+        return "bf16"
+    if mode == "weight-only":
+        config = Float8WeightOnlyConfig(granularity=PerRow())
+        label = "fp8-weight-only"
+    elif mode == "dynamic":
+        config = Float8DynamicActivationFloat8WeightConfig(granularity=PerRow())
+        label = "fp8-dynamic"
+    else:
+        logging.warning("Unknown PERSONA_FP8=%r; continuing without FP8 quantization.", FP8_MODE)
+        return "bf16"
+    try:
+        quantize_(pipe.transformer, config)
+    except Exception as error:
+        logging.warning("FP8 quantization failed (%s); continuing in BF16.", error)
+        return "bf16"
+    return label
+
+
 def _configure_transformer_acceleration(pipe):
     if not TORCH_COMPILE_ENABLED:
         return "eager"
@@ -152,12 +190,25 @@ def _configure_transformer_acceleration(pipe):
     if not callable(compile_repeated_blocks):
         logging.warning("Regional torch.compile is unavailable; using eager inference.")
         return "eager"
+    # GB10-only: one process serves many prompt shapes (T2I lengths, I2I
+    # prefix layouts, prefill/decode). Each new guard set costs one recompile
+    # of every repeated block under fullgraph=True; the Dynamo default limit
+    # (8) hard-fails long mixed sessions. 32 covers the observed diversity
+    # with headroom while staying far from unbounded recompilation.
+    try:
+        import torch._dynamo.config as _dynamo_config
+        if _dynamo_config.recompile_limit < 32:
+            _dynamo_config.recompile_limit = 32
+        if _dynamo_config.cache_size_limit < 32:
+            _dynamo_config.cache_size_limit = 32
+    except Exception as error:
+        logging.warning("Could not raise Dynamo recompile limit (%s); continuing with defaults.", error)
     compile_repeated_blocks(fullgraph=True)
     return "regional-compile"
 
 
 def pipeline():
-    global PIPE, PIPE_ACCELERATION
+    global PIPE, PIPE_ACCELERATION, PIPE_PRECISION
     if PIPE is None:
         import torch
         from diffusers import QwenImage21Pipeline
@@ -173,7 +224,9 @@ def pipeline():
             str(MODEL_DIR), torch_dtype=torch.bfloat16,
             local_files_only=True,
         ).to("cuda")
-        PIPE_ACCELERATION = _configure_transformer_acceleration(PIPE)
+        PIPE_PRECISION = _apply_transformer_quantization(PIPE)
+        compiled = _configure_transformer_acceleration(PIPE)
+        PIPE_ACCELERATION = f"{PIPE_PRECISION}+{compiled}" if PIPE_PRECISION != "bf16" else compiled
         print(
             f"Model loaded in {time.perf_counter() - started:.1f}s "
             f"({PIPE_ACCELERATION})",
@@ -198,7 +251,7 @@ def validate_manual_references(references):
     return validated
 
 
-def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42,
+def generate(prompt, references=None, width=1024, height=1024, steps=DEFAULT_STEPS, seed=42,
              context=None, user_prompt=None, progress_callback=None,
              enhancer=None, cancel_event=None):
     import torch
@@ -253,6 +306,7 @@ def generate(prompt, references=None, width=1024, height=1024, steps=40, seed=42
         "width": image.width, "height": image.height, "steps": steps,
         "seed": seed, "true_cfg_scale": 1.0, "use_kv_cache": True,
         "acceleration": PIPE_ACCELERATION or "eager",
+        "precision": PIPE_PRECISION or "bf16",
         "elapsed_seconds": round(elapsed, 2), "peak_allocated_gib": round(memory_gib, 2),
         "mode": image.mode, "alpha_extrema": alpha_extrema,
         "versions": {p: importlib.metadata.version(p) for p in ("torch", "diffusers", "transformers")},
@@ -756,7 +810,7 @@ def build_app():
                     with gr.Row(visible=False) as custom_dimensions:
                         width = gr.Slider(512, 2752, value=1024, step=32, label="幅")
                         height = gr.Slider(512, 2752, value=1024, step=32, label="高さ")
-                    steps = gr.Slider(1, 80, value=40, step=1, label="生成ステップ")
+                    steps = gr.Slider(1, 80, value=DEFAULT_STEPS, step=1, label="生成ステップ")
                     seed = gr.Number(label="Seed", value=42, precision=0, minimum=0, maximum=4294967295)
                 with gr.Row():
                     create = gr.Button("画像を生成", variant="primary")

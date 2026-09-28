@@ -61,6 +61,8 @@ GB10上のFP8 vLLM実測では、PE-T2Iは約30秒、Persona参照画像2枚を�
 
 初めて遭遇する生成形状ではTorchInductorのコンパイル分が一度だけ加わることがあります。コンパイルキャッシュは `cache/torchinductor/` に残るため、PyTorch・Triton・GPUが同じなら次回起動でも再利用されます。問題の切り分けが必要な場合は `PERSONA_TORCH_COMPILE=0 ./persona start` でeagerへ戻せます。
 
+GB10の既定はBF16のままregional compileを使い、生成ステップの既定は20です（`PERSONA_DEFAULT_STEPS`、実行時は1〜80で変更可）。20 step・mixed-promptの実測は平均約21.0秒でした。`PERSONA_FP8=dynamic` でDiTへtorchaoのFP8 dynamic量子化をregional compileの前に適用でき、同一形状の連続生成では約24.8秒まで短縮しますが、新しいPrompt長で再compileが重くなるため既定はoffです。
+
 生成中は結果欄の下に「Prompt具体化中」「生成中 12/40」「残り約○秒」などの状態を常時表示し、完了後も生成時間・サイズ・Seedを残します。進捗表示は生成結果の画像欄へ重ねず、画像欄は完成時だけ更新します。
 
 Prompt Enhancerを使うと、具体化が完了した時点で結果側に「具体化されたプロンプト」が表示されます。左側の入力プロンプトは書き換えないため、元の指示と実際に画像生成へ渡した内容を見比べられます。履歴から生成結果を開いた場合も、その生成で使った具体化後のPromptを確認できます。

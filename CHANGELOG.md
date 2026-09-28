@@ -58,6 +58,13 @@
   blocks on GB10 and persist TorchInductor artifacts in the mounted cache. This
   keeps the sampling path and prefix KV cache intact while reducing steady-state
   1024x1024 / 40-step latency in the validated setup.
+- Add optional torchao FP8 dynamic activation+weight quantization for the
+  DiT (PERSONA_FP8=dynamic, default off), applied before regional compile.
+  Same-shape 40-step steady improves about 1.23x (42.2s -> 34.4s), but new
+  prompt lengths pay heavy recompile, so the shipped default stays BF16.
+- Default interactive generation to 20 steps (PERSONA_DEFAULT_STEPS), keeping
+  1-80 steps selectable; mixed-prompt 20-step BF16 steady averages about
+  21.0s with no unusable outputs in the 9-T2I + 2-I2I quality matrix.
 
 ## 0.1.0-alpha.2 - 2026-09-20
 

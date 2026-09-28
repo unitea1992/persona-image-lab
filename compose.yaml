@@ -24,6 +24,8 @@ services:
       PERSONA_PROMPT_ENHANCER: "${PERSONA_PROMPT_ENHANCER:-1}"
       PERSONA_PE_BACKEND: "${PERSONA_PE_BACKEND:-auto}"
       PERSONA_TORCH_COMPILE: "${PERSONA_TORCH_COMPILE:-1}"
+      PERSONA_FP8: "${PERSONA_FP8:-off}"
+      PERSONA_DEFAULT_STEPS: "${PERSONA_DEFAULT_STEPS:-20}"
       TORCHINDUCTOR_CACHE_DIR: /workspace/cache/torchinductor
       PERSONA_PE_T2I_SOCKET: /workspace/cache/prompt-enhancer/t2i.sock
       PERSONA_PE_I2I_SOCKET: /workspace/cache/prompt-enhancer/i2i.sock

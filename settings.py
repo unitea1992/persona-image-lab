@@ -17,6 +17,13 @@ PE_I2I_DIR = Path(os.environ.get("PERSONA_PE_I2I_DIR", MODEL_DIR / "prompt-enhan
 PROMPT_ENHANCER_ENABLED = os.environ.get("PERSONA_PROMPT_ENHANCER", "1") != "0"
 PROMPT_ENHANCER_BACKEND = os.environ.get("PERSONA_PE_BACKEND", "auto").strip().lower()
 TORCH_COMPILE_ENABLED = os.environ.get("PERSONA_TORCH_COMPILE", "1") != "0"
+FP8_MODE = os.environ.get("PERSONA_FP8", "off").strip().lower()
+try:
+    DEFAULT_STEPS = int(os.environ.get("PERSONA_DEFAULT_STEPS", "20"))
+except ValueError:
+    DEFAULT_STEPS = 20
+if DEFAULT_STEPS not in range(1, 81):
+    DEFAULT_STEPS = 20
 PE_T2I_SOCKET = Path(os.environ.get(
     "PERSONA_PE_T2I_SOCKET", ROOT / "cache" / "prompt-enhancer" / "t2i.sock"
 )).resolve()

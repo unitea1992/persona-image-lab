@@ -59,6 +59,82 @@ class AppTests(unittest.TestCase):
         self.assertEqual(mode, "regional-compile")
         compile_repeated_blocks.assert_called_once_with(fullgraph=True)
 
+    def test_regional_compile_raises_dynamo_recompile_limit(self):
+        import sys
+        import types
+        compile_repeated_blocks = Mock()
+        pipe = SimpleNamespace(
+            transformer=SimpleNamespace(compile_repeated_blocks=compile_repeated_blocks)
+        )
+        dynamo_config = types.ModuleType("torch._dynamo.config")
+        dynamo_config.recompile_limit = 8
+        dynamo_config.cache_size_limit = 8
+        dynamo_pkg = types.ModuleType("torch._dynamo")
+        dynamo_pkg.config = dynamo_config
+        torch_mod = types.ModuleType("torch")
+        torch_mod._dynamo = dynamo_pkg
+        with patch.object(self.lab, "TORCH_COMPILE_ENABLED", True):
+            with patch.dict(sys.modules, {"torch": torch_mod,
+                                          "torch._dynamo": dynamo_pkg,
+                                          "torch._dynamo.config": dynamo_config}):
+                mode = self.lab._configure_transformer_acceleration(pipe)
+        self.assertEqual(mode, "regional-compile")
+        self.assertEqual(dynamo_config.recompile_limit, 32)
+        self.assertEqual(dynamo_config.cache_size_limit, 32)
+        compile_repeated_blocks.assert_called_once_with(fullgraph=True)
+
+    def test_regional_compile_does_not_lower_existing_dynamo_limits(self):
+        import sys
+        import types
+        compile_repeated_blocks = Mock()
+        pipe = SimpleNamespace(
+            transformer=SimpleNamespace(compile_repeated_blocks=compile_repeated_blocks)
+        )
+        dynamo_config = types.ModuleType("torch._dynamo.config")
+        dynamo_config.recompile_limit = 64
+        dynamo_config.cache_size_limit = 64
+        dynamo_pkg = types.ModuleType("torch._dynamo")
+        dynamo_pkg.config = dynamo_config
+        torch_mod = types.ModuleType("torch")
+        torch_mod._dynamo = dynamo_pkg
+        with patch.object(self.lab, "TORCH_COMPILE_ENABLED", True):
+            with patch.dict(sys.modules, {"torch": torch_mod,
+                                          "torch._dynamo": dynamo_pkg,
+                                          "torch._dynamo.config": dynamo_config}):
+                mode = self.lab._configure_transformer_acceleration(pipe)
+        self.assertEqual(mode, "regional-compile")
+        self.assertEqual(dynamo_config.recompile_limit, 64)
+        self.assertEqual(dynamo_config.cache_size_limit, 64)
+        compile_repeated_blocks.assert_called_once_with(fullgraph=True)
+
+    def test_transformer_fp8_dynamic_applied_before_compile(self):
+        import sys
+        import types
+        calls = []
+        fake_quant = types.ModuleType("torchao.quantization")
+        fake_quant.PerRow = Mock(return_value="per-row")
+        fake_quant.Float8WeightOnlyConfig = Mock(return_value="wo-config")
+        fake_quant.Float8DynamicActivationFloat8WeightConfig = Mock(return_value="dyn-config")
+        fake_quant.quantize_ = Mock(side_effect=lambda module, config: calls.append(config))
+        fake_torchao = types.ModuleType("torchao")
+        fake_torchao.quantization = fake_quant
+        compile_repeated_blocks = Mock()
+        pipe = SimpleNamespace(
+            transformer=SimpleNamespace(compile_repeated_blocks=compile_repeated_blocks)
+        )
+        with patch.dict(sys.modules, {"torchao": fake_torchao,
+                                      "torchao.quantization": fake_quant}):
+            with patch.object(self.lab, "FP8_MODE", "dynamic"):
+                precision = self.lab._apply_transformer_quantization(pipe)
+        self.assertEqual(precision, "fp8-dynamic")
+        self.assertEqual(calls, ["dyn-config"])
+
+    def test_transformer_fp8_unknown_mode_is_bf16_noop(self):
+        with patch.object(self.lab, "FP8_MODE", "bogus"):
+            precision = self.lab._apply_transformer_quantization(
+                SimpleNamespace(transformer=object()))
+        self.assertEqual(precision, "bf16")
+
     def test_transformer_compile_can_be_disabled(self):
         compile_repeated_blocks = Mock()
         pipe = SimpleNamespace(
@@ -69,6 +145,7 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(mode, "eager")
         compile_repeated_blocks.assert_not_called()
+
 
     def test_stop_request_marks_active_generation_for_cancellation(self):
         event = self.lab._new_generation_cancel_event()
